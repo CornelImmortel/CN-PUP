@@ -472,8 +472,9 @@ process MAKE_VEP_INPUT_CHUNKS {
     cp "${comparable_vcf}" "${cell_id}.comparable.input.vcf.gz"
 
     bcftools query \
-      -f '%CHROM\t%POS\t%POS\t%REF/%ALT\t+\t%CHROM:%POS_%REF/%ALT\n' \
+      -f '%CHROM\t%POS\t%POS\t%REF\t%ALT\n' \
       "${comparable_vcf}" \
+    | awk 'BEGIN { OFS="\t" } { print \$1, \$2, \$3, \$4 "/" \$5, "+", \$1 ":" \$2 "_" \$4 "/" \$5 }' \
     | sort -k1,1V -k2,2n > "${cell_id}.vep_input.all.tsv"
 
     if [[ ! -s "${cell_id}.vep_input.all.tsv" ]]; then
