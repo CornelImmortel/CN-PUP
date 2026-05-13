@@ -12,7 +12,7 @@ The final goal is to automate:
 
 ## Step 0
 
-The current version only validates the patient input sheet.
+By default the workflow validates the patient input sheet. MonoVar calling is now implemented but opt-in with `--run_monovar true`.
 
 Prepare a real config:
 
@@ -47,3 +47,18 @@ results/validation/<patient_id>.input_check.txt
 - `combined`
 
 Only validation is implemented for now. Real processes will be added step by step.
+
+## Run MonoVar
+
+After validation works on the server, launch MonoVar with:
+
+```bash
+nextflow run main.nf -profile conda --run_monovar true --monovar_script /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py --monovar_threads 6
+```
+
+Outputs:
+
+```text
+results/<patient_id>/raw_calls/monovar/<patient_id>.monovar.vcf
+results/<patient_id>/logs/<patient_id>.monovar.log
+```
