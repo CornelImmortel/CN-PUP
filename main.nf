@@ -75,7 +75,7 @@ workflow {
             }
         }
 
-        split_with_info_ch = split_monovar_vcfs_ch.join(filter_info_ch)
+        split_with_info_ch = split_monovar_vcfs_ch.combine(filter_info_ch, by: 0)
 
         leukocyte_exclusion_input_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
             germline_mode == 'joint_monovar_leukocyte' && isLeukocyteCell(cell_id)
