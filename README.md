@@ -62,3 +62,22 @@ Outputs:
 results/<patient_id>/raw_calls/monovar/<patient_id>.monovar.vcf
 results/<patient_id>/logs/<patient_id>.monovar.log
 ```
+
+### Small region test
+
+To test the MonoVar process without launching a full run, restrict `samtools mpileup` to one interval:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --run_monovar true \
+  --monovar_script /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py \
+  --monovar_threads 2 \
+  --monovar_region chr1:1-1000000
+```
+
+Use `-resume` after fixing failures:
+
+```bash
+nextflow run main.nf -profile conda --run_monovar true --monovar_region chr1:1-1000000 -resume
+```

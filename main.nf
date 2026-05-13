@@ -13,6 +13,7 @@ params.patients = params.patients ?: "configs/patients.tsv"
 params.outdir = params.outdir ?: "results"
 params.monovar_script = params.monovar_script ?: ""
 params.monovar_threads = params.monovar_threads ?: 2
+params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
 
 workflow {
@@ -136,7 +137,13 @@ process RUN_MONOVAR {
     echo "BAM list: ${monovar_bam_list}" >> "${patient_id}.monovar.log"
     echo "Reference: ${ref_fasta}" >> "${patient_id}.monovar.log"
     echo "MonoVar: ${params.monovar_script}" >> "${patient_id}.monovar.log"
+    echo "Region: ${params.monovar_region}" >> "${patient_id}.monovar.log"
     echo >> "${patient_id}.monovar.log"
+
+    region_args=()
+    if [[ -n "${params.monovar_region}" ]]; then
+      region_args=(-r "${params.monovar_region}")
+    fi
 
     samtools mpileup \
       -BQ0 \
@@ -144,6 +151,7 @@ process RUN_MONOVAR {
       -f "${ref_fasta}" \
       -q 40 \
       -b "${monovar_bam_list}" \
+      "\${region_args[@]}" \
     | python "${params.monovar_script}" \
       -p 0.002 \
       -a 0.2 \

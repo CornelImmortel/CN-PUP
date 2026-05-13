@@ -2,6 +2,7 @@ patients: configs/patients.tsv
 outdir: results
 monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
 monovar_threads: 2
+monovar_region: ""
 run_monovar: false
 min_total_depth: 20
 min_alt_reads: 4
