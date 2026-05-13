@@ -15,6 +15,11 @@ params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
 params.run_vep_filter = params.run_vep_filter ?: false
+params.vep_species = params.vep_species ?: "homo_sapiens"
+params.vep_cache_version = params.vep_cache_version ?: ""
+params.vep_fasta = params.vep_fasta ?: ""
+params.vep_forks = params.vep_forks ?: 2
+params.vep_buffer_size = params.vep_buffer_size ?: 5000
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -478,6 +483,16 @@ process VEP_POPULATION_COSMIC_FILTER {
       exit 0
     fi
 
+    fasta_args=()
+    if [[ -n "${params.vep_fasta}" ]]; then
+      fasta_args=(--fasta "${params.vep_fasta}")
+    fi
+
+    cache_version_args=()
+    if [[ -n "${params.vep_cache_version}" ]]; then
+      cache_version_args=(--cache_version "${params.vep_cache_version}")
+    fi
+
     vep \
       --input_file "\$vep_input" \
       --output_file "\$vep_output" \
@@ -486,7 +501,12 @@ process VEP_POPULATION_COSMIC_FILTER {
       --offline \
       --cache \
       --assembly "${params.genome}" \
+      --species "${params.vep_species}" \
       --dir_cache "${params.vep_cache}" \
+      "\${cache_version_args[@]}" \
+      "\${fasta_args[@]}" \
+      --fork "${params.vep_forks}" \
+      --buffer_size "${params.vep_buffer_size}" \
       --symbol \
       --canonical \
       --numbers \
