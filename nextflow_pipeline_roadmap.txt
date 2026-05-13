@@ -1,0 +1,405 @@
+﻿Nextflow automation roadmap for the CTC MonoVar pipeline
+Generated: 2026-05-13
+
+Goal
+====
+Build a fully automated, reproducible Nextflow pipeline that can run over multiple patients. The final workflow should start from patient-level BAM files and reference/germline inputs, call variants with MonoVar, filter and normalize the calls, subtract germline/background variants, annotate population/COSMIC status with VEP, and produce final long tables/matrices/reports for the Shiny app and downstream tree analyses.
+
+Why Nextflow
+============
+Nextflow is useful here because the workflow has repeated, file-based steps that must be run for many patients and many cells. It gives us:
+- automatic per-patient/per-cell parallelization;
+- resume after crashes with -resume;
+- structured logging for each process;
+- separate conda/container environments per tool;
+- clear input/output organization;
+- a GitHub-ready reproducible pipeline instead of manual screen commands.
+
+High-level final workflow
+=========================
+
+patients.tsv / config
+  -> validate patient inputs
+  -> build or check MonoVar BAM lists
+  -> run MonoVar per patient
+  -> split multi-sample MonoVar VCF into per-cell VCFs
+  -> prepare germline/bulk/leukocyte exclusion VCFs
+  -> quality filter per-cell VCFs
+  -> normalize VCFs with bcftools norm
+  -> subtract germline/background calls
+  -> convert comparable VCFs to long tables
+  -> merge patient/cell long tables
+  -> prepare VEP input from unique variants
+  -> run VEP or accept precomputed VEP annotation
+  -> apply population AF/COSMIC filtering
+  -> build matrices and app inputs
+  -> write QC/reports
+
+Step-by-step development plan
+=============================
+
+Step 0 - Create clean repo structure
+------------------------------------
+Create a GitHub-ready Nextflow repo layout:
+
+  ctc-nextflow-pipeline/
+    main.nf
+    nextflow.config
+    configs/
+      patients.tsv.example
+      params.example.yml
+    bin/
+      split_monovar_vcf.py
+      add_population_cosmic_filters.py
+      vcf_to_long_table.py
+      build_matrices.py
+    envs/
+      monovar_py2.yml
+      bcftools.yml
+      vep.yml
+      python_reporting.yml
+    docs/
+      pipeline_overview.md
+    test_data/
+      .gitkeep
+    results/
+      .gitkeep
+
+Decision: keep reusable helper scripts in bin/ and call them from Nextflow processes.
+
+Step 1 - Define input config
+----------------------------
+Create a patient sheet that can describe multiple patients.
+
+Possible patients.tsv columns:
+- patient_id
+- ref_fasta
+- monovar_bam_list
+- germline_vcf
+- leukocyte_bam optional
+- output_label optional
+
+Alternative later: one cells.tsv with patient_id, cell_id, bam_path, cell_type.
+
+First version should use an explicit MonoVar BAM list per patient because it is simple and robust.
+
+Step 2 - Minimal Nextflow skeleton
+----------------------------------
+Make a first main.nf that only:
+- reads patients.tsv;
+- prints/checks the patient IDs and file paths;
+- creates a results folder per patient.
+
+Purpose: learn Nextflow channels and verify config parsing before running heavy tools.
+
+Step 3 - Add dependency/environment handling
+--------------------------------------------
+Define separate environments:
+- MonoVar environment: Python 2 + samtools.
+- bcftools environment: bcftools, bgzip, tabix.
+- VEP environment: ensembl-vep, with external VEP cache path.
+- Python environment: pandas and plotting/reporting packages.
+
+Important: MonoVar is Python 2, so it should be isolated from the modern Python scripts.
+
+Step 4 - Add MonoVar calling process
+------------------------------------
+Create process RUN_MONOVAR.
+
+Input:
+- patient_id
+- BAM list
+- reference FASTA
+- MonoVar script path or bundled script
+
+Command shape:
+
+  samtools mpileup -BQ0 -d10000 -f ref.fa -q 40 -b bam_list.txt \
+  | python2 monovar.py -p 0.002 -a 0.2 -t 0.05 -m <threads> -f ref.fa -b bam_list.txt -o output.vcf
+
+Output:
+- results/<patient_id>/raw_calls/monovar/<patient_id>.monovar.vcf
+- logs/<patient_id>.monovar.log
+
+First validation:
+- Run on one patient only.
+- Confirm MonoVar VCF exists and has expected sample columns.
+
+Step 5 - Split MonoVar VCF per cell
+-----------------------------------
+Create process SPLIT_MONOVAR.
+
+Input:
+- MonoVar multi-sample VCF
+- optional sample map: sample column -> CTC label/leukocyte label
+
+Output:
+- one VCF per cell:
+  results/<patient_id>/split_calls/monovar/<cell_id>.monovar.split.vcf
+
+Use/borrow existing split logic from ClawBio or previous scripts. Important MonoVar-specific detail: handle the extra trailing barcode/passcode column.
+
+Step 6 - Prepare germline/background exclusion VCF
+--------------------------------------------------
+Create process PREPARE_GERMLINE_EXCLUSION.
+
+Input:
+- germline/bulk VCF
+- reference FASTA
+
+Steps:
+- keep SNVs;
+- keep PASS variants;
+- normalize with bcftools norm;
+- bgzip + tabix.
+
+Output:
+- results/<patient_id>/germline_exclusion/<patient_id>.germline.pass.snvs.norm.vcf.gz
+
+Later extension:
+- If leukocyte variant calls are available, create a second exclusion VCF and merge it with the blood/germline exclusion.
+
+
+Step 6b - Optional germline/background calling mode
+---------------------------------------------------
+Add this later as a configurable option, not in the first minimal version.
+
+The pipeline should support different ways of creating the germline/background exclusion set:
+
+1. Precomputed germline/bulk VCF
+   - User provides a germline or blood/bulk VCF directly.
+   - Pipeline only filters, normalizes, indexes, and uses it for subtraction.
+   - This is the simplest and should be the first supported mode.
+
+2. Bulk BAM -> DeepVariant germline/background VCF
+   - User provides a matched bulk/blood BAM.
+   - Pipeline runs DeepVariant on this BAM.
+   - The resulting DeepVariant VCF is filtered to PASS SNVs, normalized, and used as exclusion.
+   - This is useful when no germline VCF has been precomputed.
+
+3. Single leukocyte BAM/callset as background
+   - User provides a single leukocyte BAM, or a VCF already called from that leukocyte.
+   - For MonoVar, preferred design is to joint-call CTCs + leukocyte, then use the leukocyte genotype/read evidence as an artifact/background filter.
+   - Alternative design is to call the leukocyte separately and create a leukocyte exclusion VCF.
+   - This can help remove WGA or recurrent single-cell artifacts not captured by bulk blood.
+
+4. Combined exclusion
+   - Use both bulk/blood germline VCF and leukocyte-derived calls.
+   - Remove variants present in either background source.
+   - This is probably the strictest and most biologically defensible mode once implemented.
+
+Possible config parameter:
+
+  germline_mode = "precomputed_vcf" | "deepvariant_bulk_bam" | "leukocyte_vcf" | "joint_monovar_leukocyte" | "combined"
+
+Possible patients.tsv columns to support later:
+- germline_vcf
+- bulk_bam
+- leukocyte_bam
+- leukocyte_vcf
+- germline_mode
+
+Implementation note:
+- Keep this modular: one Nextflow process should produce a normalized exclusion VCF, regardless of whether it came from a precomputed VCF, DeepVariant on bulk BAM, leukocyte calls, or a combined source. Downstream filtering/subtraction should consume only that standardized exclusion VCF.
+
+Step 7 - Filter, normalize, and subtract per-cell VCFs
+------------------------------------------------------
+Create process FILTER_NORMALIZE_SUBTRACT.
+
+Input:
+- split per-cell MonoVar VCF
+- germline exclusion VCF
+- reference FASTA
+
+Current filtering defaults:
+- FILTER is PASS or .
+- genotype is non-reference;
+- SNV only;
+- total depth >= 20;
+- ALT reads >= 4.
+
+Make thresholds configurable:
+- min_total_depth
+- min_alt_reads
+- min_vaf
+
+Output:
+- processed VCF
+- normalized VCF
+- final comparable/blood-subtracted VCF
+
+This step can reuse logic from:
+- scripts/filter_single_sample_vcf.sh
+- scripts/subtract_bulk_exclusion.sh
+- mutation_matrix_pipeline/scripts/02_process_raw_calls.sh
+
+Step 8 - Convert final VCFs to long tables
+------------------------------------------
+Create process VCF_TO_LONG.
+
+Input:
+- final comparable VCFs per cell
+
+Output:
+- one long TSV per cell with columns like:
+  patient_id, ctc_id, caller, var_id, chrom, pos, ref, alt, GT, DP, AD, alt_reads, ref_reads, VAF, gene/consequence if available.
+
+Reuse/adapt:
+- mutation_matrix_pipeline/scripts/03_vcf_to_long_table.py
+
+Step 9 - Merge long tables
+--------------------------
+Create process MERGE_LONG_TABLES.
+
+Input:
+- all per-cell long tables for a patient or for all patients
+
+Output:
+- all_mutations_long.tsv.gz
+
+Reuse/adapt:
+- mutation_matrix_pipeline/scripts/04_merge_long_tables.py
+
+Step 10 - Prepare VEP input
+---------------------------
+Create process PREPARE_VEP_INPUT.
+
+Input:
+- merged long table
+
+Output:
+- unique_variants_for_vep.tsv
+- sorted unique_variants_for_vep.sorted.tsv
+
+Reuse/adapt:
+- add_population_cosmic_filters.py prepare
+
+Important:
+- VEP input must be sorted by chromosome and position.
+
+Step 11 - Run VEP annotation
+----------------------------
+Create process RUN_VEP.
+
+Input:
+- sorted VEP input
+- VEP cache path
+
+Output:
+- vep_population_cosmic.tsv
+
+VEP fields to request:
+- Uploaded_variation
+- Location
+- Allele
+- Gene
+- SYMBOL
+- Feature
+- Consequence
+- IMPACT
+- HGVSc
+- HGVSp
+- Existing_variation
+- MAX_AF
+- MAX_AF_POPS
+- AF
+- gnomADe_AF
+- gnomADg_AF
+- Extra
+
+Important:
+- Use offline cache on the server.
+- Make cache path configurable, probably ~/.vep.
+
+Step 12 - Apply population AF / COSMIC filtering
+------------------------------------------------
+Create process APPLY_POP_COSMIC_FILTER.
+
+Input:
+- merged long table
+- VEP annotation TSV
+
+Rule:
+- population_af = max of MAX_AF, AF, gnomADe_AF, gnomADg_AF and parsed extra AFs when available.
+- common if population_af > 0.001.
+- drop common variants unless Existing_variation contains COSMIC/COSV.
+- keep rare/unobserved variants.
+- keep unknown population annotation but flag separately.
+
+Output:
+- all_mutations_long.population_cosmic.tsv.gz
+- all_mutations_long.population_cosmic.keep.tsv.gz
+- QC summary of filter statuses.
+
+Reuse:
+- VCFs/comparisons/population_cosmic_filter/add_population_cosmic_filters.py
+
+Step 13 - Build matrices and app inputs
+---------------------------------------
+Create process BUILD_MATRICES.
+
+Input:
+- final kept long table
+
+Output:
+- binary mutation matrix
+- VAF matrix
+- alt-read matrix
+- total-depth matrix
+- CTC-SCITE input tables if needed
+- Shiny app compatible long table
+
+Reuse/adapt:
+- mutation_matrix_pipeline/scripts/05_build_matrices.py
+
+Step 14 - QC reports
+--------------------
+Create process WRITE_QC_REPORTS.
+
+Initial reports:
+- variants per cell before/after each filter;
+- shared variants between CTCs;
+- coding/protein-changing summaries;
+- population/COSMIC filter status counts;
+- overlap with primary/metastasis if those VCFs are supplied;
+- warning if a cell has suspiciously low/high burden.
+
+This can start as TSV summaries, then later become HTML/Quarto reports.
+
+Step 15 - Multi-patient scaling
+-------------------------------
+Once one patient works:
+- run all patients from patients.tsv;
+- keep outputs separated by patient_id;
+- optionally create a combined cross-patient summary table.
+
+Nextflow will naturally parallelize independent patients/cells.
+
+Development strategy
+====================
+Build and test in small increments:
+
+1. Skeleton reads patients.tsv.
+2. MonoVar process works for one patient.
+3. Split process works.
+4. Filter/normalize/subtract works on one split VCF.
+5. Run over all CTCs for one patient.
+6. Long table and matrices work.
+7. VEP integration works.
+8. Population/COSMIC filter works.
+9. Multi-patient run works.
+10. Add reports and polish GitHub documentation.
+
+Do not start with the full pipeline. Each step should be runnable and testable before adding the next.
+
+Immediate next practical task
+=============================
+The next coding task should be to create a minimal Nextflow repo with:
+- main.nf
+- nextflow.config
+- configs/patients.tsv.example
+- envs/ placeholders
+- one process: CHECK_INPUTS
+
+After that, add RUN_MONOVAR as the first real process.
+

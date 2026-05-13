@@ -1,0 +1,8 @@
+name: ctc_bcftools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - bcftools
+  - htslib
+  - samtools

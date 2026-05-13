@@ -1,0 +1,6 @@
+name: ctc_vep
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ensembl-vep

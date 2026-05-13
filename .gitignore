@@ -1,0 +1,11 @@
+.nextflow/
+.nextflow*
+work/
+results/*
+!results/.gitkeep
+*.log
+*.trace
+*.timeline.html
+*.report.html
+*.dag.*
+configs/patients.tsv
