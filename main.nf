@@ -25,6 +25,7 @@ workflow {
                 row.patient_id,
                 row.ref_fasta,
                 row.monovar_bam_list,
+                row.cell_metadata,
                 row.germline_mode,
                 row.germline_vcf,
                 row.bulk_bam,
@@ -35,7 +36,7 @@ workflow {
 
     checked_ch = CHECK_INPUTS(patients_ch)
 
-    checked_ch.view { "Validated patient: ${it[0]} -> ${it[8]}" }
+    checked_ch.view { "Validated patient: ${it[0]} -> ${it[9]}" }
 
     if (params.run_monovar) {
         RUN_MONOVAR(checked_ch)
@@ -50,10 +51,10 @@ process CHECK_INPUTS {
     publishDir "${params.outdir}/validation", mode: 'copy'
 
     input:
-    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf)
+    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf)
 
     output:
-    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path("${patient_id}.input_check.txt")
+    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path("${patient_id}.input_check.txt")
 
     script:
     """
@@ -65,6 +66,7 @@ process CHECK_INPUTS {
     echo "patient_id\t${patient_id}" >> "\$report"
     echo "ref_fasta\t${ref_fasta}" >> "\$report"
     echo "monovar_bam_list\t${monovar_bam_list}" >> "\$report"
+    echo "cell_metadata\t${cell_metadata}" >> "\$report"
     echo "germline_mode\t${germline_mode}" >> "\$report"
     echo "germline_vcf\t${germline_vcf}" >> "\$report"
     echo "bulk_bam\t${bulk_bam}" >> "\$report"
@@ -76,6 +78,15 @@ process CHECK_INPUTS {
     test -n "${patient_id}" || { echo "ERROR: missing patient_id" >&2; exit 1; }
     test -s "${ref_fasta}" || { echo "ERROR: ref_fasta not found: ${ref_fasta}" >&2; exit 1; }
     test -s "${monovar_bam_list}" || { echo "ERROR: monovar_bam_list not found: ${monovar_bam_list}" >&2; exit 1; }
+    test -s "${cell_metadata}" || { echo "ERROR: cell_metadata not found: ${cell_metadata}" >&2; exit 1; }
+
+    awk -F '\t' -v patient_id="${patient_id}" '
+      NR == 1 { next }
+      NF < 4 || \$1 == "" || \$2 == "" || \$3 == "" || \$4 == "" { print "ERROR: invalid cell_metadata row " NR > "/dev/stderr"; exit 1 }
+      \$1 != patient_id { print "ERROR: cell_metadata patient_id mismatch on row " NR ": " \$1 > "/dev/stderr"; exit 1 }
+      { count++ }
+      END { if (count < 1) { print "ERROR: no cells found in cell_metadata" > "/dev/stderr"; exit 1 } }
+    ' "${cell_metadata}"
 
     case "${germline_mode}" in
       precomputed_vcf)
@@ -118,7 +129,7 @@ process RUN_MONOVAR {
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.log"
 
     input:
-    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
+    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
 
     output:
     tuple val(patient_id), path("${patient_id}.monovar.vcf"), path("${patient_id}.monovar.log")

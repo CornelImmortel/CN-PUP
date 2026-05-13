@@ -18,6 +18,8 @@ Prepare a real config:
 
 ```bash
 cp configs/patients.tsv.example configs/patients.tsv
+# Optional: copy/edit the per-cell sheet if you do not want to use the example directly
+cp configs/patient_01_cells.tsv.example configs/patient_01_cells.tsv
 ```
 
 Then run:
