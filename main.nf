@@ -4,9 +4,8 @@ nextflow.enable.dsl = 2
 
 /*
  * CeciNestPasUnePipeline
- * Step 1: input validation plus optional MonoVar calling and splitting.
- *
- * Default run only validates inputs. Add --run_monovar true to launch MonoVar and split per-cell VCFs.
+ * Input validation, optional MonoVar calling, per-cell splitting, and first
+ * background-excluded comparable MonoVar VCFs.
  */
 
 params.patients = params.patients ?: "configs/patients.tsv"
@@ -27,6 +26,10 @@ def resolveInputPath(value) {
     return file(v).toString()
 }
 
+def isLeukocyteCell(cellId) {
+    def x = cellId.toString().toLowerCase()
+    return x == 'leukocyte' || x == 'leuko' || x == 'wbc' || x.contains('leuk')
+}
 
 workflow {
     patients_ch = Channel
@@ -47,14 +50,48 @@ workflow {
         }
 
     checked_ch = CHECK_INPUTS(patients_ch)
-
     checked_ch.view { "Validated patient: ${it[0]} -> ${it[9]}" }
 
     if (params.run_monovar) {
+        filter_info_ch = checked_ch.map { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
+            tuple(patient_id, ref_fasta, germline_mode, germline_vcf)
+        }
+
+        precomputed_input_ch = checked_ch.filter { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check -> germline_mode == 'precomputed_vcf' }
+        PREPARE_PRECOMPUTED_GERMLINE(precomputed_input_ch)
+        PREPARE_PRECOMPUTED_GERMLINE.out.view { "Precomputed germline exclusion VCF: ${it[1]}" }
+
         RUN_MONOVAR(checked_ch)
         RUN_MONOVAR.out.view { "MonoVar VCF: ${it[1]}" }
+
         SPLIT_MONOVAR(RUN_MONOVAR.out)
         SPLIT_MONOVAR.out.view { "Split MonoVar VCFs: ${it[1]}" }
+
+        split_monovar_vcfs_ch = SPLIT_MONOVAR.out.flatMap { patient_id, split_vcfs, sample_map, split_log ->
+            def files = split_vcfs instanceof List ? split_vcfs : [split_vcfs]
+            files.collect { split_vcf ->
+                def cell_id = split_vcf.getBaseName().replaceFirst(/\.monovar\.split$/, '')
+                tuple(patient_id, cell_id, split_vcf)
+            }
+        }
+
+        split_with_info_ch = split_monovar_vcfs_ch.join(filter_info_ch)
+
+        leukocyte_exclusion_input_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
+            germline_mode == 'joint_monovar_leukocyte' && isLeukocyteCell(cell_id)
+        }
+        PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION(leukocyte_exclusion_input_ch)
+        PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out.view { "MonoVar leukocyte exclusion VCF: ${it[1]}" }
+
+        exclusion_ch = PREPARE_PRECOMPUTED_GERMLINE.out.mix(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out)
+
+        target_split_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
+            !isLeukocyteCell(cell_id)
+        }
+
+        monovar_background_ch = target_split_ch.join(exclusion_ch)
+        FILTER_MONOVAR_AND_SUBTRACT_GERMLINE(monovar_background_ch)
+        FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
     } else {
         log.info "MonoVar calling skipped. Re-run with --run_monovar true when ready."
     }
@@ -146,7 +183,7 @@ process RUN_MONOVAR {
     tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
 
     output:
-    tuple val(patient_id), path("${patient_id}.monovar.vcf"), val(cell_metadata), path("${patient_id}.monovar.log")
+    tuple val(patient_id), path("${patient_id}.monovar.vcf"), val(cell_metadata), val(ref_fasta), path("${patient_id}.monovar.log")
 
     script:
     """
@@ -197,7 +234,7 @@ process SPLIT_MONOVAR {
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.split.log"
 
     input:
-    tuple val(patient_id), path(monovar_vcf), val(cell_metadata), path(monovar_log)
+    tuple val(patient_id), path(monovar_vcf), val(cell_metadata), val(ref_fasta), path(monovar_log)
 
     output:
     tuple val(patient_id), path("*.monovar.split.vcf"), path("${patient_id}.monovar.split_sample_map.tsv"), path("${patient_id}.monovar.split.log")
@@ -212,5 +249,178 @@ process SPLIT_MONOVAR {
       --patient-id "${patient_id}" \
       --outdir . \
     > "${patient_id}.monovar.split.log" 2>&1
+    """
+}
+
+process PREPARE_PRECOMPUTED_GERMLINE {
+    tag "$patient_id"
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/germline_exclusion" }, mode: 'copy', pattern: "*.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.germline_exclusion.log"
+
+    input:
+    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.precomputed_germline.pass.snvs.norm.vcf.gz"), path("${patient_id}.precomputed_germline.pass.snvs.norm.vcf.gz.tbi"), val(ref_fasta), val("precomputed_germline")
+
+    script:
+    """
+    set -euo pipefail
+
+    bcftools view \
+      -v snps \
+      -f PASS \
+      "${germline_vcf}" \
+      -Ou \
+    | bcftools norm \
+      -f "${ref_fasta}" \
+      -m -any \
+      -Oz \
+      -o "${patient_id}.precomputed_germline.pass.snvs.norm.vcf.gz" \
+      2> "${patient_id}.precomputed_germline.germline_exclusion.log"
+
+    tabix -f -p vcf "${patient_id}.precomputed_germline.pass.snvs.norm.vcf.gz"
+    """
+}
+
+process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
+    tag { "${patient_id}:${cell_id}" }
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/germline_exclusion" }, mode: 'copy', pattern: "*.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.leukocyte_exclusion.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(split_vcf), val(ref_fasta), val(germline_mode), val(germline_vcf)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.monovar_leukocyte.filtered.norm.vcf.gz"), path("${patient_id}.monovar_leukocyte.filtered.norm.vcf.gz.tbi"), val(ref_fasta), val("monovar_leukocyte")
+
+    script:
+    """
+    set -euo pipefail
+
+    filtered="${patient_id}.monovar_leukocyte.filtered.vcf"
+    filtered_gz="${patient_id}.monovar_leukocyte.filtered.vcf.gz"
+    norm="${patient_id}.monovar_leukocyte.filtered.norm.vcf.gz"
+    log="${patient_id}.monovar_leukocyte.leukocyte_exclusion.log"
+
+    awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
+      BEGIN { FS=OFS="\t" }
+      /^#/ { print; next }
+      {
+        split(\$9, fmt, ":")
+        split(\$10, val, ":")
+        delete f
+        for (i = 1; i <= length(fmt); i++) f[fmt[i]] = val[i]
+        split(f["AD"], ad, ",")
+        gt = f["GT"]
+        dp = f["DP"] + 0
+        ref = ad[1] + 0
+        alt = ad[2] + 0
+        vaf = (ref + alt) > 0 ? alt / (ref + alt) : 0
+        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.") && dp >= min_dp && alt >= min_alt && vaf >= min_vaf) print
+      }
+    ' "${split_vcf}" > "\$filtered"
+
+    echo "Input leukocyte split VCF: ${split_vcf}" > "\$log"
+    echo "min_total_depth=${params.min_total_depth}" >> "\$log"
+    echo "min_alt_reads=${params.min_alt_reads}" >> "\$log"
+    echo "min_vaf=${params.min_vaf}" >> "\$log"
+    echo -n "Leukocyte exclusion variants before normalization: " >> "\$log"
+    grep -vc '^#' "\$filtered" >> "\$log"
+
+    bgzip -f -c "\$filtered" > "\$filtered_gz"
+    tabix -f -p vcf "\$filtered_gz"
+
+    bcftools view -v snps "\$filtered_gz" -Ou \
+    | bcftools norm \
+      -f "${ref_fasta}" \
+      -m -any \
+      -Oz \
+      -o "\$norm" \
+      2>> "\$log"
+    tabix -f -p vcf "\$norm"
+
+    echo -n "Leukocyte exclusion variants after normalization: " >> "\$log"
+    bcftools view -H "\$norm" | wc -l >> "\$log"
+    """
+}
+
+process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
+    tag { "${patient_id}:${cell_id}:${exclusion_source}" }
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/processed_calls/monovar" }, mode: 'copy', pattern: "*.filtered.vcf"
+    publishDir { "${params.outdir}/${patient_id}/normalized_calls/monovar" }, mode: 'copy', pattern: "*.norm.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/comparable_calls/monovar" }, mode: 'copy', pattern: "*.no_*.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.monovar_filter.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(split_vcf), val(ref_fasta), val(germline_mode), val(germline_vcf), path(exclusion_vcf), path(exclusion_tbi), val(exclusion_ref_fasta), val(exclusion_source)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.filtered.norm.vcf.gz"), path("*.no_*.vcf.gz"), path("*.monovar_filter.log")
+
+    script:
+    """
+    set -euo pipefail
+
+    filtered="${cell_id}.monovar.filtered.vcf"
+    filtered_gz="${cell_id}.monovar.filtered.vcf.gz"
+    norm="${cell_id}.monovar.filtered.norm.vcf.gz"
+    comparable="${cell_id}.monovar.no_${exclusion_source}.vcf.gz"
+    log="${cell_id}.monovar_filter.log"
+
+    awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
+      BEGIN { FS=OFS="\t" }
+      /^#/ { print; next }
+      {
+        split(\$9, fmt, ":")
+        split(\$10, val, ":")
+        delete f
+        for (i = 1; i <= length(fmt); i++) f[fmt[i]] = val[i]
+        split(f["AD"], ad, ",")
+        gt = f["GT"]
+        dp = f["DP"] + 0
+        ref = ad[1] + 0
+        alt = ad[2] + 0
+        vaf = (ref + alt) > 0 ? alt / (ref + alt) : 0
+        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.") && dp >= min_dp && alt >= min_alt && vaf >= min_vaf) print
+      }
+    ' "${split_vcf}" > "\$filtered"
+
+    echo "Input split VCF: ${split_vcf}" > "\$log"
+    echo "Exclusion source: ${exclusion_source}" >> "\$log"
+    echo "Exclusion VCF: ${exclusion_vcf}" >> "\$log"
+    echo "min_total_depth=${params.min_total_depth}" >> "\$log"
+    echo "min_alt_reads=${params.min_alt_reads}" >> "\$log"
+    echo "min_vaf=${params.min_vaf}" >> "\$log"
+    echo -n "Filtered variants: " >> "\$log"
+    grep -vc '^#' "\$filtered" >> "\$log"
+
+    bgzip -f -c "\$filtered" > "\$filtered_gz"
+    tabix -f -p vcf "\$filtered_gz"
+
+    bcftools view -v snps "\$filtered_gz" -Ou \
+    | bcftools norm \
+      -f "${ref_fasta}" \
+      -m -any \
+      -Oz \
+      -o "\$norm" \
+      2>> "\$log"
+    tabix -f -p vcf "\$norm"
+
+    bcftools isec \
+      -C \
+      -w1 \
+      "\$norm" \
+      "${exclusion_vcf}" \
+      -Oz \
+      -o "\$comparable" \
+      2>> "\$log"
+    tabix -f -p vcf "\$comparable"
+
+    echo -n "Comparable variants after background subtraction: " >> "\$log"
+    bcftools view -H "\$comparable" | wc -l >> "\$log"
     """
 }

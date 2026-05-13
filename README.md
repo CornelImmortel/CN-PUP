@@ -97,3 +97,35 @@ patient_id    cell_id    bam_path    cell_type
 ```
 
 The splitter maps MonoVar sample columns to `cell_id` by matching SRR IDs in the BAM paths. If needed, it falls back to the row order in the cell metadata file.
+
+
+## Step 4: background subtraction
+
+After MonoVar splitting, the pipeline can produce comparable per-CTC MonoVar VCFs by filtering each split VCF and subtracting a background/exclusion VCF.
+
+Implemented modes:
+
+- `precomputed_vcf`: normalize a precomputed germline/bulk VCF from `germline_vcf`, then subtract it.
+- `joint_monovar_leukocyte`: use the split MonoVar `leukocyte` sample from the same joint call as the exclusion set.
+
+To test the leukocyte mode, use the leukocyte example sheet:
+
+```bash
+cp configs/patients.leukocyte.tsv.example configs/patients.tsv
+nextflow run main.nf \
+  -profile conda \
+  -resume \
+  --run_monovar true \
+  --monovar_script /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py \
+  --monovar_threads 2 \
+  --monovar_region chr1:1-1000000
+```
+
+Outputs:
+
+```text
+results/<patient_id>/germline_exclusion/<patient_id>.monovar_leukocyte.filtered.norm.vcf.gz
+results/<patient_id>/processed_calls/monovar/<cell_id>.monovar.filtered.vcf
+results/<patient_id>/normalized_calls/monovar/<cell_id>.monovar.filtered.norm.vcf.gz
+results/<patient_id>/comparable_calls/monovar/<cell_id>.monovar.no_monovar_leukocyte.vcf.gz
+```
