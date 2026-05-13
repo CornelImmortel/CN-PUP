@@ -128,6 +128,10 @@ workflow {
             qc_inputs_ch = split_vcfs_by_patient_ch.combine(BUILD_MUTATION_MATRICES.out, by: 0).combine(filter_info_ch, by: 0)
             SUMMARIZE_FILTERS_QC(qc_inputs_ch)
             SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
+
+            MAKE_MULTIQC_CUSTOM_CONTENT(SUMMARIZE_FILTERS_QC.out)
+            MULTIQC_REPORT(MAKE_MULTIQC_CUSTOM_CONTENT.out)
+            MULTIQC_REPORT.out.view { "MultiQC report: ${it[1]}" }
         } else {
             log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
         }
@@ -670,5 +674,50 @@ process SUMMARIZE_FILTERS_QC {
       --germline-mode "${germline_mode}" \
       --vep-sites-per-chunk "${params.vep_sites_per_chunk}" \
       ${split_vcfs}
+    """
+}
+
+process MAKE_MULTIQC_CUSTOM_CONTENT {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports/multiqc_custom" }, mode: 'copy', pattern: "*_mqc.json"
+
+    input:
+    tuple val(patient_id), path(filter_settings), path(prefilter_qc), path(filter_impact)
+
+    output:
+    tuple val(patient_id), path("*_mqc.json")
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/make_multiqc_custom_content.py" \
+      --patient-id "${patient_id}" \
+      --settings "${filter_settings}" \
+      --prefilter-qc "${prefilter_qc}" \
+      --filter-impact "${filter_impact}" \
+      --outdir .
+    """
+}
+
+process MULTIQC_REPORT {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/multiqc" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(multiqc_custom_files)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.multiqc_report.html"), path("multiqc_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p multiqc_inputs
+    cp ${multiqc_custom_files} multiqc_inputs/
+    multiqc multiqc_inputs --force --outdir . --filename "${patient_id}.multiqc_report.html"
     """
 }
