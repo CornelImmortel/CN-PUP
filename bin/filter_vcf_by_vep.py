@@ -34,7 +34,7 @@ def read_vep_keep_set(vep_tsv, max_af_threshold, keep_cosmic):
     keep = set()
     annotations = {}
     with open(vep_tsv, newline="") as handle:
-        reader = csv.DictReader((line for line in handle if not line.startswith("##")), delimiter="\t")
+        reader = csv.DictReader((line[1:] if line.startswith("#") else line for line in handle if not line.startswith("##")), delimiter="\t")
         required = {"Uploaded_variation", "Existing_variation", "MAX_AF"}
         missing = required.difference(reader.fieldnames or [])
         if missing:

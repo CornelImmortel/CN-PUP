@@ -20,6 +20,7 @@ params.vep_cache_version = params.vep_cache_version ?: ""
 params.vep_fasta = params.vep_fasta ?: ""
 params.vep_forks = params.vep_forks ?: 2
 params.vep_buffer_size = params.vep_buffer_size ?: 5000
+params.vep_sites_per_chunk = params.vep_sites_per_chunk ?: 5000
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -100,8 +101,22 @@ workflow {
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
 
         if (params.run_vep_filter) {
-            VEP_POPULATION_COSMIC_FILTER(FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out)
-            VEP_POPULATION_COSMIC_FILTER.out.view { "Population/COSMIC filtered VCF: ${it[3]}" }
+            MAKE_VEP_INPUT_CHUNKS(FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out)
+
+            vep_chunk_ch = MAKE_VEP_INPUT_CHUNKS.out.flatMap { patient_id, cell_id, comparable_vcf, chunks ->
+                def files = chunks instanceof List ? chunks : [chunks]
+                files.collect { chunk -> tuple(patient_id, cell_id, chunk) }
+            }
+            comparable_for_vep_ch = MAKE_VEP_INPUT_CHUNKS.out.map { patient_id, cell_id, comparable_vcf, chunks ->
+                tuple(patient_id, cell_id, comparable_vcf)
+            }
+
+            VEP_ANNOTATE_CHUNK(vep_chunk_ch)
+            vep_annotated_chunks_ch = VEP_ANNOTATE_CHUNK.out.groupTuple(by: [0, 1])
+            vep_merge_input_ch = vep_annotated_chunks_ch.join(comparable_for_vep_ch, by: [0, 1])
+
+            MERGE_VEP_AND_POPULATION_COSMIC_FILTER(vep_merge_input_ch)
+            MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out.view { "Population/COSMIC filtered VCF: ${it[3]}" }
         } else {
             log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
         }
@@ -438,48 +453,66 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
     """
 }
 
-process VEP_POPULATION_COSMIC_FILTER {
+process MAKE_VEP_INPUT_CHUNKS {
     tag { "${patient_id}:${cell_id}" }
-    conda "envs/vep.yml"
-    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.vep.tsv"
-    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.population_cosmic.summary.tsv"
-    publishDir { "${params.outdir}/${patient_id}/final_calls/monovar" }, mode: 'copy', pattern: "*.population_cosmic.vcf.gz*"
-    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.vep_filter.log"
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar/chunks" }, mode: 'copy', pattern: "vep_chunks/*.tsv"
 
     input:
     tuple val(patient_id), val(cell_id), path(norm_vcf), path(comparable_vcf), path(filter_log)
 
     output:
-    tuple val(patient_id), val(cell_id), path("*.vep.tsv"), path("*.population_cosmic.vcf.gz"), path("*.population_cosmic.summary.tsv"), path("*.vep_filter.log")
+    tuple val(patient_id), val(cell_id), path("${cell_id}.comparable.input.vcf.gz"), path("vep_chunks/*.tsv")
 
     script:
     """
     set -euo pipefail
 
-    prefix="${cell_id}.monovar"
-    vep_input="\${prefix}.vep_input.tsv"
-    vep_output="\${prefix}.vep.tsv"
-    kept_vcf="\${prefix}.population_cosmic.vcf"
-    kept_gz="\${prefix}.population_cosmic.vcf.gz"
-    summary="\${prefix}.population_cosmic.summary.tsv"
-    log="\${prefix}.vep_filter.log"
-
-    echo "Input comparable VCF: ${comparable_vcf}" > "\$log"
-    echo "max_population_af=${params.max_population_af}" >> "\$log"
-    echo "keep_cosmic=${params.keep_cosmic}" >> "\$log"
-    echo "vep_cache=${params.vep_cache}" >> "\$log"
+    mkdir -p vep_chunks
+    cp "${comparable_vcf}" "${cell_id}.comparable.input.vcf.gz"
 
     bcftools query \
       -f '%CHROM\t%POS\t%POS\t%REF/%ALT\t+\t%CHROM:%POS_%REF/%ALT\n' \
       "${comparable_vcf}" \
-    | sort -k1,1V -k2,2n > "\$vep_input"
+    | sort -k1,1V -k2,2n > "${cell_id}.vep_input.all.tsv"
 
-    if [[ ! -s "\$vep_input" ]]; then
-      bcftools view -h "${comparable_vcf}" > "\$kept_vcf"
-      bgzip -f -c "\$kept_vcf" > "\$kept_gz"
-      tabix -f -p vcf "\$kept_gz"
-      printf 'metric\tvalue\ninput_variants\t0\nkept_variants\t0\nremoved_variants\t0\nmax_population_af\t%s\nkeep_cosmic\t%s\n' "${params.max_population_af}" "${params.keep_cosmic}" > "\$summary"
-      printf 'Uploaded_variation\tLocation\tAllele\tGene\tSYMBOL\tFeature\tConsequence\tIMPACT\tHGVSc\tHGVSp\tExisting_variation\tMAX_AF\tMAX_AF_POPS\tAF\tgnomADe_AF\tgnomADg_AF\tkeep_population_cosmic\tcosmic_hit\n' > "\$vep_output"
+    if [[ ! -s "${cell_id}.vep_input.all.tsv" ]]; then
+      : > "vep_chunks/${cell_id}.chunk_000000.tsv"
+    else
+      split \
+        -l "${params.vep_sites_per_chunk}" \
+        -d \
+        -a 6 \
+        --additional-suffix=.tsv \
+        "${cell_id}.vep_input.all.tsv" \
+        "vep_chunks/${cell_id}.chunk_"
+    fi
+    """
+}
+
+process VEP_ANNOTATE_CHUNK {
+    tag { "${patient_id}:${cell_id}:${chunk.simpleName}" }
+    cpus params.vep_forks
+    conda "envs/vep.yml"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar/chunk_annotations" }, mode: 'copy', pattern: "*.vep.tsv"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.vep_chunk.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(chunk)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.vep.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    out="${chunk.simpleName}.vep.tsv"
+    log="${chunk.simpleName}.vep_chunk.log"
+
+    if [[ ! -s "${chunk}" ]]; then
+      printf '#Uploaded_variation\tLocation\tAllele\tGene\tSYMBOL\tFeature\tConsequence\tIMPACT\tHGVSc\tHGVSp\tExisting_variation\tMAX_AF\tMAX_AF_POPS\tAF\tgnomADe_AF\tgnomADg_AF\n' > "\$out"
+      echo "Empty VEP chunk: ${chunk}" > "\$log"
       exit 0
     fi
 
@@ -494,8 +527,8 @@ process VEP_POPULATION_COSMIC_FILTER {
     fi
 
     vep \
-      --input_file "\$vep_input" \
-      --output_file "\$vep_output" \
+      --input_file "${chunk}" \
+      --output_file "\$out" \
       --tab \
       --force_overwrite \
       --offline \
@@ -518,13 +551,51 @@ process VEP_POPULATION_COSMIC_FILTER {
       --max_af \
       --no_stats \
       --fields Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Consequence,IMPACT,HGVSc,HGVSp,Existing_variation,MAX_AF,MAX_AF_POPS,AF,gnomADe_AF,gnomADg_AF \
-      >> "\$log" 2>&1
+      > "\$log" 2>&1
+    """
+}
+
+process MERGE_VEP_AND_POPULATION_COSMIC_FILTER {
+    tag { "${patient_id}:${cell_id}" }
+    conda "envs/vep.yml"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.vep.tsv"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.population_cosmic.*.tsv"
+    publishDir { "${params.outdir}/${patient_id}/final_calls/monovar" }, mode: 'copy', pattern: "*.population_cosmic.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.vep_filter.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(vep_chunks), path(comparable_vcf)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.vep.tsv"), path("*.population_cosmic.vcf.gz"), path("*.population_cosmic.summary.tsv"), path("*.vep_filter.log")
+
+    script:
+    """
+    set -euo pipefail
+
+    prefix="${cell_id}.monovar"
+    merged_vep="\${prefix}.vep.tsv"
+    kept_vcf="\${prefix}.population_cosmic.vcf"
+    kept_gz="\${prefix}.population_cosmic.vcf.gz"
+    summary="\${prefix}.population_cosmic.summary.tsv"
+    annotations="\${prefix}.population_cosmic.annotations.tsv"
+    log="\${prefix}.vep_filter.log"
+
+    echo "Input comparable VCF: ${comparable_vcf}" > "\$log"
+    echo "VEP chunks: ${vep_chunks}" >> "\$log"
+    echo "max_population_af=${params.max_population_af}" >> "\$log"
+    echo "keep_cosmic=${params.keep_cosmic}" >> "\$log"
+    echo "vep_sites_per_chunk=${params.vep_sites_per_chunk}" >> "\$log"
+
+    python "${projectDir}/bin/merge_vep_tables.py" \
+      --output "\$merged_vep" \
+      ${vep_chunks}
 
     python "${projectDir}/bin/filter_vcf_by_vep.py" \
       --vcf "${comparable_vcf}" \
-      --vep "\$vep_output" \
+      --vep "\$merged_vep" \
       --output-vcf "\$kept_vcf" \
-      --output-annotations "\${prefix}.population_cosmic.annotations.tsv" \
+      --output-annotations "\$annotations" \
       --summary "\$summary" \
       --max-af "${params.max_population_af}" \
       ${params.keep_cosmic ? '--keep-cosmic' : ''} \

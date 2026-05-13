@@ -165,8 +165,10 @@ results/<patient_id>/final_calls/monovar/<cell_id>.monovar.population_cosmic.vcf
 The VEP stage follows the main nf-core/Sarek and Ensembl VEP recommendations that matter for this project:
 
 - run VEP in offline/cache mode using `--vep_cache`, `--vep_species`, `--vep_cache_version`, and `--genome`;
-- use VEP internal parallelism with `--vep_forks`;
+- split each comparable VCF into VEP chunks with `--vep_sites_per_chunk`;
+- run chunk-level VEP processes in parallel;
+- use VEP internal parallelism within each chunk with `--vep_forks`;
 - expose `--vep_buffer_size` so larger runs can trade memory for speed;
 - optionally pass a FASTA with `--vep_fasta` if the cache does not auto-detect it.
 
-For very large full-genome VCFs, nf-core's `vcf_annotate_ensemblvep_snpeff` subworkflow goes further by scatter-gathering VCF chunks before VEP and concatenating them again. Our current workflow annotates small per-cell post-filter VCFs, so that heavier pattern is not implemented yet.
+This mirrors the scatter-gather idea used by nf-core's `vcf_annotate_ensemblvep_snpeff` subworkflow: chunks are annotated independently, then merged before applying the population/COSMIC filter.
