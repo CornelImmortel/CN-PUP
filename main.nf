@@ -14,6 +14,7 @@ params.monovar_script = params.monovar_script ?: ""
 params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
+params.run_vep_filter = params.run_vep_filter ?: false
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -92,6 +93,13 @@ workflow {
         monovar_background_ch = target_split_ch.combine(exclusion_ch, by: 0)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE(monovar_background_ch)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
+
+        if (params.run_vep_filter) {
+            VEP_POPULATION_COSMIC_FILTER(FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out)
+            VEP_POPULATION_COSMIC_FILTER.out.view { "Population/COSMIC filtered VCF: ${it[3]}" }
+        } else {
+            log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
+        }
     } else {
         log.info "MonoVar calling skipped. Re-run with --run_monovar true when ready."
     }
@@ -422,5 +430,87 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
 
     echo -n "Comparable variants after background subtraction: " >> "\$log"
     bcftools view -H "\$comparable" | wc -l >> "\$log"
+    """
+}
+
+process VEP_POPULATION_COSMIC_FILTER {
+    tag { "${patient_id}:${cell_id}" }
+    conda "envs/vep.yml"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.vep.tsv"
+    publishDir { "${params.outdir}/${patient_id}/vep/monovar" }, mode: 'copy', pattern: "*.population_cosmic.summary.tsv"
+    publishDir { "${params.outdir}/${patient_id}/final_calls/monovar" }, mode: 'copy', pattern: "*.population_cosmic.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.vep_filter.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(norm_vcf), path(comparable_vcf), path(filter_log)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.vep.tsv"), path("*.population_cosmic.vcf.gz"), path("*.population_cosmic.summary.tsv"), path("*.vep_filter.log")
+
+    script:
+    """
+    set -euo pipefail
+
+    prefix="${cell_id}.monovar"
+    vep_input="\${prefix}.vep_input.tsv"
+    vep_output="\${prefix}.vep.tsv"
+    kept_vcf="\${prefix}.population_cosmic.vcf"
+    kept_gz="\${prefix}.population_cosmic.vcf.gz"
+    summary="\${prefix}.population_cosmic.summary.tsv"
+    log="\${prefix}.vep_filter.log"
+
+    echo "Input comparable VCF: ${comparable_vcf}" > "\$log"
+    echo "max_population_af=${params.max_population_af}" >> "\$log"
+    echo "keep_cosmic=${params.keep_cosmic}" >> "\$log"
+    echo "vep_cache=${params.vep_cache}" >> "\$log"
+
+    bcftools query \
+      -f '%CHROM\t%POS\t%POS\t%REF/%ALT\t+\t%CHROM:%POS_%REF/%ALT\n' \
+      "${comparable_vcf}" \
+    | sort -k1,1V -k2,2n > "\$vep_input"
+
+    if [[ ! -s "\$vep_input" ]]; then
+      bcftools view -h "${comparable_vcf}" > "\$kept_vcf"
+      bgzip -f -c "\$kept_vcf" > "\$kept_gz"
+      tabix -f -p vcf "\$kept_gz"
+      printf 'metric\tvalue\ninput_variants\t0\nkept_variants\t0\nremoved_variants\t0\nmax_population_af\t%s\nkeep_cosmic\t%s\n' "${params.max_population_af}" "${params.keep_cosmic}" > "\$summary"
+      printf 'Uploaded_variation\tLocation\tAllele\tGene\tSYMBOL\tFeature\tConsequence\tIMPACT\tHGVSc\tHGVSp\tExisting_variation\tMAX_AF\tMAX_AF_POPS\tAF\tgnomADe_AF\tgnomADg_AF\tkeep_population_cosmic\tcosmic_hit\n' > "\$vep_output"
+      exit 0
+    fi
+
+    vep \
+      --input_file "\$vep_input" \
+      --output_file "\$vep_output" \
+      --tab \
+      --force_overwrite \
+      --offline \
+      --cache \
+      --assembly "${params.genome}" \
+      --dir_cache "${params.vep_cache}" \
+      --symbol \
+      --canonical \
+      --numbers \
+      --hgvs \
+      --af \
+      --af_1kg \
+      --af_gnomade \
+      --af_gnomadg \
+      --max_af \
+      --no_stats \
+      --fields Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Consequence,IMPACT,HGVSc,HGVSp,Existing_variation,MAX_AF,MAX_AF_POPS,AF,gnomADe_AF,gnomADg_AF \
+      >> "\$log" 2>&1
+
+    python "${projectDir}/bin/filter_vcf_by_vep.py" \
+      --vcf "${comparable_vcf}" \
+      --vep "\$vep_output" \
+      --output-vcf "\$kept_vcf" \
+      --output-annotations "\${prefix}.population_cosmic.annotations.tsv" \
+      --summary "\$summary" \
+      --max-af "${params.max_population_af}" \
+      ${params.keep_cosmic ? '--keep-cosmic' : ''} \
+      >> "\$log" 2>&1
+
+    bgzip -f -c "\$kept_vcf" > "\$kept_gz"
+    tabix -f -p vcf "\$kept_gz"
     """
 }

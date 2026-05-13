@@ -129,3 +129,32 @@ results/<patient_id>/processed_calls/monovar/<cell_id>.monovar.filtered.vcf
 results/<patient_id>/normalized_calls/monovar/<cell_id>.monovar.filtered.norm.vcf.gz
 results/<patient_id>/comparable_calls/monovar/<cell_id>.monovar.no_monovar_leukocyte.vcf.gz
 ```
+
+
+## Step 5: VEP population/COSMIC filtering
+
+This optional stage annotates each comparable MonoVar VCF with VEP and keeps variants that either:
+
+- have `MAX_AF <= --max_population_af` (default `0.001`), or
+- have a COSMIC identifier in `Existing_variation` when `--keep_cosmic true`.
+
+Run on the small test region:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -resume \
+  --run_monovar true \
+  --run_vep_filter true \
+  --monovar_script /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py \
+  --monovar_threads 2 \
+  --monovar_region chr1:1-1000000
+```
+
+Expected outputs:
+
+```text
+results/<patient_id>/vep/monovar/<cell_id>.monovar.vep.tsv
+results/<patient_id>/vep/monovar/<cell_id>.monovar.population_cosmic.summary.tsv
+results/<patient_id>/final_calls/monovar/<cell_id>.monovar.population_cosmic.vcf.gz
+```
