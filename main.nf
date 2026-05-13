@@ -117,6 +117,12 @@ workflow {
 
             MERGE_VEP_AND_POPULATION_COSMIC_FILTER(vep_merge_input_ch)
             MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out.view { "Population/COSMIC filtered VCF: ${it[3]}" }
+
+            final_vcfs_by_patient_ch = MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out
+                .map { patient_id, cell_id, vep_tsv, final_vcf, summary_tsv, log_file -> tuple(patient_id, final_vcf) }
+                .groupTuple(by: 0)
+            BUILD_MUTATION_MATRICES(final_vcfs_by_patient_ch)
+            BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
         } else {
             log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
         }
@@ -604,5 +610,29 @@ process MERGE_VEP_AND_POPULATION_COSMIC_FILTER {
 
     bgzip -f -c "\$kept_vcf" > "\$kept_gz"
     tabix -f -p vcf "\$kept_gz"
+    """
+}
+
+process BUILD_MUTATION_MATRICES {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/tables" }, mode: 'copy', pattern: "*.tsv"
+    publishDir { "${params.outdir}/${patient_id}/matrices" }, mode: 'copy', pattern: "*.tsv"
+
+    input:
+    tuple val(patient_id), path(final_vcfs)
+
+    output:
+    tuple val(patient_id), path("*.long.tsv"), path("*.binary_matrix.tsv"), path("*.altread_matrix.tsv"), path("*.refread_matrix.tsv"), path("*.summary.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/build_mutation_matrices.py" \
+      --patient-id "${patient_id}" \
+      --caller monovar \
+      --out-prefix "${patient_id}.monovar.final" \
+      ${final_vcfs}
     """
 }

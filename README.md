@@ -172,3 +172,18 @@ The VEP stage follows the main nf-core/Sarek and Ensembl VEP recommendations tha
 - optionally pass a FASTA with `--vep_fasta` if the cache does not auto-detect it.
 
 This mirrors the scatter-gather idea used by nf-core's `vcf_annotate_ensemblvep_snpeff` subworkflow: chunks are annotated independently, then merged before applying the population/COSMIC filter.
+
+
+## Step 6: tables and matrices
+
+After final VEP population/COSMIC filtering, the pipeline builds app-ready outputs:
+
+```text
+results/<patient_id>/tables/<patient_id>.monovar.final.long.tsv
+results/<patient_id>/tables/<patient_id>.monovar.final.summary.tsv
+results/<patient_id>/matrices/<patient_id>.monovar.final.binary_matrix.tsv
+results/<patient_id>/matrices/<patient_id>.monovar.final.altread_matrix.tsv
+results/<patient_id>/matrices/<patient_id>.monovar.final.refread_matrix.tsv
+```
+
+The long table keeps one row per retained variant per CTC and includes `ctc_id`, `var_id`, `refread`, `altread`, genotype fields, and any gene/consequence annotation that is present in the final VCF.
