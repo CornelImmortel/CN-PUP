@@ -447,3 +447,17 @@ Decision:
 - Continue building CN-PUP as a custom Nextflow pipeline.
 - Borrow structure and conventions from nf-core/sarek and nf-core modules.
 - Do not replace this workflow with Sarek, because Sarek does not solve the MonoVar/single-cell CTC-specific part.
+
+
+Sarek-like reporting additions
+==============================
+Current CN-PUP MultiQC custom content covers filter settings, filter impact, per-cell final variant counts, pre-filter non-reference counts, median DP, median ALT reads and median VAF.
+
+Useful Sarek-style additions to implement next:
+- samtools stats on each input BAM for alignment metrics;
+- mosdepth on each input BAM for genome/exome coverage distributions and per-contig coverage;
+- bcftools stats on comparable/final VCFs for VCF-level depth, quality and allele-frequency summaries;
+- software_versions.yml or one versions table per run;
+- optional MultiQC static plots directory if needed for manuscript figures.
+
+These should be optional because mosdepth over full WES/WGS BAMs can be more expensive than the current tiny test workflow.

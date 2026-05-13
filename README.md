@@ -211,4 +211,16 @@ results/<patient_id>/multiqc/<patient_id>.multiqc_report.html
 results/<patient_id>/multiqc/<patient_id>.multiqc_report_data/
 ```
 
-The report currently contains filter settings, total filter impact, and per-cell pre-filter depth / alt-read / VAF summaries. The plain TSV reports are still kept in `results/<patient_id>/reports/` for scripting and auditability.
+The report currently contains filter settings, total filter impact, per-cell final variant burden, pre-filter non-reference burden, median depth, median alt reads, median VAF, and per-cell retained/removed call counts. The plain TSV reports are still kept in `results/<patient_id>/reports/` for scripting and auditability.
+
+
+The pipeline also writes Nextflow execution reports, similar to nf-core/Sarek:
+
+```text
+results/pipeline_info/execution_report.html
+results/pipeline_info/execution_timeline.html
+results/pipeline_info/execution_trace.txt
+results/pipeline_info/pipeline_dag.dot
+```
+
+Future Sarek-like additions that require extra processes are alignment-level QC (`samtools stats`, `mosdepth` coverage distributions/contig coverage) and VCF-level QC (`bcftools stats`) for the final VCFs.

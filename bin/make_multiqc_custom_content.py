@@ -38,6 +38,24 @@ def write_json(path, payload):
         handle.write("\n")
 
 
+def write_bargraph(path, section_id, section_name, description, title, ylab, data):
+    write_json(
+        path,
+        {
+            "id": section_id,
+            "section_name": section_name,
+            "description": description,
+            "plot_type": "bargraph",
+            "pconfig": {
+                "id": f"{section_id}_plot",
+                "title": title,
+                "ylab": ylab,
+            },
+            "data": data,
+        },
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--patient-id", required=True)
@@ -101,6 +119,94 @@ def main():
             },
             "data": prefilter_data,
         },
+    )
+
+    final_counts = {
+        sample: {"final_variant_count": values.get("final_variant_count")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.final_variant_counts_mqc.json",
+        "cnpup_final_variant_counts",
+        "CN-PUP final variant counts",
+        "Retained variants per cell after germline/background, quality, population AF and COSMIC filtering.",
+        "Final retained variants per cell",
+        "Variants",
+        final_counts,
+    )
+
+    nonref_counts = {
+        sample: {"prefilter_nonref_sites": values.get("nonref_sites")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.prefilter_nonref_counts_mqc.json",
+        "cnpup_prefilter_nonref_counts",
+        "CN-PUP pre-filter non-reference calls",
+        "MonoVar non-reference calls per cell before downstream filtering.",
+        "Pre-filter non-reference calls per cell",
+        "Non-reference calls",
+        nonref_counts,
+    )
+
+    depth_medians = {
+        sample: {"median_depth": values.get("nonref_dp_median")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.prefilter_depth_median_mqc.json",
+        "cnpup_prefilter_depth_median",
+        "CN-PUP median depth before filtering",
+        "Median depth among MonoVar non-reference candidate sites before downstream filtering.",
+        "Median depth at non-reference sites",
+        "Depth",
+        depth_medians,
+    )
+
+    alt_medians = {
+        sample: {"median_alt_reads": values.get("nonref_alt_median")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.prefilter_alt_median_mqc.json",
+        "cnpup_prefilter_alt_median",
+        "CN-PUP median alt reads before filtering",
+        "Median alternative-read count among MonoVar non-reference candidate sites before downstream filtering.",
+        "Median alternative reads at non-reference sites",
+        "Alternative reads",
+        alt_medians,
+    )
+
+    vaf_medians = {
+        sample: {"median_vaf": values.get("nonref_vaf_median")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.prefilter_vaf_median_mqc.json",
+        "cnpup_prefilter_vaf_median",
+        "CN-PUP median VAF before filtering",
+        "Median VAF among MonoVar non-reference candidate sites before downstream filtering.",
+        "Median VAF at non-reference sites",
+        "VAF",
+        vaf_medians,
+    )
+
+    per_cell_drop = {}
+    for sample, values in prefilter_data.items():
+        nonref = values.get("nonref_sites") or 0
+        final = values.get("final_variant_count") or 0
+        per_cell_drop[sample] = {
+            "removed_calls": max(nonref - final, 0),
+            "final_retained_calls": final,
+        }
+    write_bargraph(
+        outdir / f"{args.patient_id}.per_cell_filter_drop_mqc.json",
+        "cnpup_per_cell_filter_drop",
+        "CN-PUP per-cell filter drop",
+        "Per-cell calls retained and removed by downstream filters after MonoVar non-reference candidate calling.",
+        "Per-cell filter impact",
+        "Variant calls",
+        per_cell_drop,
     )
 
     write_json(
