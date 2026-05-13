@@ -1,4 +1,4 @@
-﻿Nextflow automation roadmap for the CTC MonoVar pipeline
+Nextflow automation roadmap for the CTC MonoVar pipeline
 Generated: 2026-05-13
 
 Goal
@@ -402,4 +402,48 @@ The next coding task should be to create a minimal Nextflow repo with:
 - one process: CHECK_INPUTS
 
 After that, add RUN_MONOVAR as the first real process.
+Existing Nextflow pipelines checked and reusable ideas
+======================================================
 
+We checked whether an existing Nextflow pipeline could be used directly as the basis for this project. The conclusion is that no existing pipeline appears to cover the exact workflow we need: single-cell CTC BAMs -> MonoVar joint calling -> per-cell VCFs -> matched blood/leukocyte subtraction -> VEP population AF + COSMIC rescue -> matrices/app/tree inputs.
+
+Pipelines/resources checked:
+
+1. nf-core/sarek
+   - Source: https://nf-co.re/sarek and https://github.com/nf-core/sarek
+   - Strong reference for WGS/WES germline and somatic variant calling.
+   - Useful design ideas: input samplesheets, modular processes, annotation stages, clear output documentation, profiles, containers/conda, MultiQC-style reporting.
+   - Not directly suitable because it is bulk/tumor-normal oriented and does not implement MonoVar or single-cell CTC-specific filtering.
+
+2. nf-core/variantbenchmarking
+   - Useful later for representation-aware comparison against truth/reference VCFs.
+   - Not a caller pipeline and not designed for MonoVar/CTC processing.
+
+3. CERC-Genomic-Medicine/vep_pipeline
+   - Source: https://github.com/CERC-Genomic-Medicine/vep_pipeline
+   - Useful as inspiration for the VEP annotation step.
+   - Reinforces that VEP should be a separate process with configurable cache, flags, input VCF/TSV, and output summaries.
+
+4. nf-core/modules
+   - Source: https://nf-co.re/modules
+   - Useful for common tools and conventions: bcftools, samtools, VEP, possibly DeepVariant.
+   - No obvious ready MonoVar module was found.
+   - Later, we can either import nf-core modules for standard tools or keep our own small processes while following nf-core style.
+
+Reusable ideas we should keep:
+
+- Use a samplesheet/patients.tsv as the source of truth, not filename guessing.
+- Keep one small process per tool or logical task.
+- Use process-specific environments: MonoVar Python 2, bcftools/samtools, VEP, Python reporting.
+- Make output directories predictable and documented.
+- Make all thresholds configurable: DP, ALT reads, VAF, population AF threshold, germline mode.
+- Make long runs resumable with Nextflow -resume.
+- Keep VEP separate from variant calling so it can be rerun independently if annotation settings change.
+- Track versions and logs for every process.
+- Eventually add test data and a small test profile, even if the real data stay on the server.
+- Consider adopting nf-core style gradually, but do not force full nf-core templating yet because this is still a thesis/research pipeline under rapid development.
+
+Decision:
+- Continue building CN-PUP as a custom Nextflow pipeline.
+- Borrow structure and conventions from nf-core/sarek and nf-core modules.
+- Do not replace this workflow with Sarek, because Sarek does not solve the MonoVar/single-cell CTC-specific part.
