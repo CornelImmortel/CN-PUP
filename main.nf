@@ -4,9 +4,9 @@ nextflow.enable.dsl = 2
 
 /*
  * CeciNestPasUnePipeline
- * Step 1: input validation plus optional MonoVar calling.
+ * Step 1: input validation plus optional MonoVar calling and splitting.
  *
- * Default run only validates inputs. Add --run_monovar true to launch MonoVar.
+ * Default run only validates inputs. Add --run_monovar true to launch MonoVar and split per-cell VCFs.
  */
 
 params.patients = params.patients ?: "configs/patients.tsv"
@@ -16,6 +16,18 @@ params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
 
+def resolveInputPath(value) {
+    if (value == null) {
+        return ''
+    }
+    def v = value.toString()
+    if (v == '' || v == 'NA') {
+        return v
+    }
+    return file(v).toString()
+}
+
+
 workflow {
     patients_ch = Channel
         .fromPath(params.patients, checkIfExists: true)
@@ -23,14 +35,14 @@ workflow {
         .map { row ->
             tuple(
                 row.patient_id,
-                row.ref_fasta,
-                row.monovar_bam_list,
-                row.cell_metadata,
+                resolveInputPath(row.ref_fasta),
+                resolveInputPath(row.monovar_bam_list),
+                resolveInputPath(row.cell_metadata),
                 row.germline_mode,
-                row.germline_vcf,
-                row.bulk_bam,
-                row.leukocyte_bam,
-                row.leukocyte_vcf
+                resolveInputPath(row.germline_vcf),
+                resolveInputPath(row.bulk_bam),
+                resolveInputPath(row.leukocyte_bam),
+                resolveInputPath(row.leukocyte_vcf)
             )
         }
 
@@ -41,6 +53,8 @@ workflow {
     if (params.run_monovar) {
         RUN_MONOVAR(checked_ch)
         RUN_MONOVAR.out.view { "MonoVar VCF: ${it[1]}" }
+        SPLIT_MONOVAR(RUN_MONOVAR.out)
+        SPLIT_MONOVAR.out.view { "Split MonoVar VCFs: ${it[1]}" }
     } else {
         log.info "MonoVar calling skipped. Re-run with --run_monovar true when ready."
     }
@@ -132,7 +146,7 @@ process RUN_MONOVAR {
     tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
 
     output:
-    tuple val(patient_id), path("${patient_id}.monovar.vcf"), path("${patient_id}.monovar.log")
+    tuple val(patient_id), path("${patient_id}.monovar.vcf"), val(cell_metadata), path("${patient_id}.monovar.log")
 
     script:
     """
@@ -172,5 +186,31 @@ process RUN_MONOVAR {
       -b "${monovar_bam_list}" \
       -o "${patient_id}.monovar.vcf" \
     >> "${patient_id}.monovar.log" 2>&1
+    """
+}
+
+process SPLIT_MONOVAR {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/split_calls/monovar" }, mode: 'copy', pattern: "*.monovar.split.vcf"
+    publishDir { "${params.outdir}/${patient_id}/split_calls/monovar" }, mode: 'copy', pattern: "*.split_sample_map.tsv"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.split.log"
+
+    input:
+    tuple val(patient_id), path(monovar_vcf), val(cell_metadata), path(monovar_log)
+
+    output:
+    tuple val(patient_id), path("*.monovar.split.vcf"), path("${patient_id}.monovar.split_sample_map.tsv"), path("${patient_id}.monovar.split.log")
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/split_monovar_vcf.py" \
+      --input "${monovar_vcf}" \
+      --cell-metadata "${cell_metadata}" \
+      --patient-id "${patient_id}" \
+      --outdir . \
+    > "${patient_id}.monovar.split.log" 2>&1
     """
 }

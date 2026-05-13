@@ -12,7 +12,7 @@ The final goal is to automate:
 
 ## Step 0
 
-By default the workflow validates the patient input sheet. MonoVar calling is now implemented but opt-in with `--run_monovar true`.
+By default the workflow validates the patient input sheet. MonoVar calling and per-cell MonoVar VCF splitting are implemented but opt-in with `--run_monovar true`.
 
 Prepare a real config:
 
@@ -63,6 +63,9 @@ Outputs:
 ```text
 results/<patient_id>/raw_calls/monovar/<patient_id>.monovar.vcf
 results/<patient_id>/logs/<patient_id>.monovar.log
+results/<patient_id>/split_calls/monovar/<cell_id>.monovar.split.vcf
+results/<patient_id>/split_calls/monovar/<patient_id>.monovar.split_sample_map.tsv
+results/<patient_id>/logs/<patient_id>.monovar.split.log
 ```
 
 ### Small region test
@@ -83,3 +86,14 @@ Use `-resume` after fixing failures:
 ```bash
 nextflow run main.nf -profile conda --run_monovar true --monovar_region chr1:1-1000000 -resume
 ```
+
+
+## Cell metadata
+
+`configs/patients.tsv` stays one row per patient. The `cell_metadata` column points to a per-patient TSV with one row per cell:
+
+```text
+patient_id    cell_id    bam_path    cell_type
+```
+
+The splitter maps MonoVar sample columns to `cell_id` by matching SRR IDs in the BAM paths. If needed, it falls back to the row order in the cell metadata file.
