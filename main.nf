@@ -15,6 +15,9 @@ params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
 params.run_vep_filter = params.run_vep_filter ?: false
+params.run_bam_qc = params.run_bam_qc ?: false
+params.mosdepth_threads = params.mosdepth_threads ?: 2
+params.mosdepth_by = params.mosdepth_by ?: ""
 params.vep_species = params.vep_species ?: "homo_sapiens"
 params.vep_cache_version = params.vep_cache_version ?: ""
 params.vep_fasta = params.vep_fasta ?: ""
@@ -38,6 +41,20 @@ def isLeukocyteCell(cellId) {
     return x == 'leukocyte' || x == 'leuko' || x == 'wbc' || x.contains('leuk')
 }
 
+
+def cellMetadataRows(patientId, cellMetadata) {
+    def rows = []
+    file(cellMetadata).readLines().drop(1).each { line ->
+        if (line.trim()) {
+            def cols = line.split('\t', -1)
+            if (cols.size() >= 4 && cols[0] == patientId) {
+                rows << tuple(patientId, cols[1], resolveInputPath(cols[2]), cols[3])
+            }
+        }
+    }
+    return rows
+}
+
 workflow {
     patients_ch = Channel
         .fromPath(params.patients, checkIfExists: true)
@@ -58,6 +75,14 @@ workflow {
 
     checked_ch = CHECK_INPUTS(patients_ch)
     checked_ch.view { "Validated patient: ${it[0]} -> ${it[9]}" }
+
+    if (params.run_bam_qc) {
+        bam_qc_input_ch = checked_ch.flatMap { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
+            cellMetadataRows(patient_id, cell_metadata)
+        }
+        SAMTOOLS_STATS(bam_qc_input_ch)
+        MOSDEPTH_QC(bam_qc_input_ch)
+    }
 
     if (params.run_monovar) {
         filter_info_ch = checked_ch.map { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
@@ -118,8 +143,12 @@ workflow {
             MERGE_VEP_AND_POPULATION_COSMIC_FILTER(vep_merge_input_ch)
             MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out.view { "Population/COSMIC filtered VCF: ${it[3]}" }
 
-            final_vcfs_by_patient_ch = MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out
-                .map { patient_id, cell_id, vep_tsv, final_vcf, summary_tsv, log_file -> tuple(patient_id, final_vcf) }
+            final_vcf_cell_ch = MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out
+                .map { patient_id, cell_id, vep_tsv, final_vcf, summary_tsv, log_file -> tuple(patient_id, cell_id, final_vcf) }
+            BCFTOOLS_STATS(final_vcf_cell_ch)
+
+            final_vcfs_by_patient_ch = final_vcf_cell_ch
+                .map { patient_id, cell_id, final_vcf -> tuple(patient_id, final_vcf) }
                 .groupTuple(by: 0)
             BUILD_MUTATION_MATRICES(final_vcfs_by_patient_ch)
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
@@ -130,8 +159,30 @@ workflow {
             SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
 
             MAKE_MULTIQC_CUSTOM_CONTENT(SUMMARIZE_FILTERS_QC.out)
-            MULTIQC_REPORT(MAKE_MULTIQC_CUSTOM_CONTENT.out)
-            MULTIQC_REPORT.out.view { "MultiQC report: ${it[1]}" }
+
+            bcftools_stats_by_patient_ch = BCFTOOLS_STATS.out
+                .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
+                .groupTuple(by: 0)
+
+            if (params.run_bam_qc) {
+                samtools_stats_by_patient_ch = SAMTOOLS_STATS.out
+                    .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
+                    .groupTuple(by: 0)
+                mosdepth_by_patient_ch = MOSDEPTH_QC.out
+                    .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
+                    .groupTuple(by: 0)
+                multiqc_full_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
+                    .combine(bcftools_stats_by_patient_ch, by: 0)
+                    .combine(samtools_stats_by_patient_ch, by: 0)
+                    .combine(mosdepth_by_patient_ch, by: 0)
+                MULTIQC_REPORT_WITH_BAM_QC(multiqc_full_input_ch)
+                MULTIQC_REPORT_WITH_BAM_QC.out.view { "MultiQC report: ${it[1]}" }
+            } else {
+                multiqc_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
+                    .combine(bcftools_stats_by_patient_ch, by: 0)
+                MULTIQC_REPORT(multiqc_input_ch)
+                MULTIQC_REPORT.out.view { "MultiQC report: ${it[1]}" }
+            }
         } else {
             log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
         }
@@ -677,6 +728,74 @@ process SUMMARIZE_FILTERS_QC {
     """
 }
 
+
+process SAMTOOLS_STATS {
+    tag { "${patient_id}:${cell_id}" }
+    conda "envs/alignment_qc.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports/samtools/${cell_id}" }, mode: 'copy', pattern: "*.samtools.stats.out"
+
+    input:
+    tuple val(patient_id), val(cell_id), val(bam), val(cell_type)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.samtools.stats.out")
+
+    script:
+    """
+    set -euo pipefail
+
+    samtools stats "${bam}" > "${cell_id}.samtools.stats.out"
+    """
+}
+
+process MOSDEPTH_QC {
+    tag { "${patient_id}:${cell_id}" }
+    cpus params.mosdepth_threads
+    conda "envs/alignment_qc.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports/mosdepth/${cell_id}" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), val(cell_id), val(bam), val(cell_type)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("${cell_id}*")
+
+    script:
+    """
+    set -euo pipefail
+
+    by_args=()
+    if [[ -n "${params.mosdepth_by}" ]]; then
+      by_args=(--by "${params.mosdepth_by}")
+    fi
+
+    mosdepth \
+      --threads ${task.cpus} \
+      "\${by_args[@]}" \
+      "${cell_id}" \
+      "${bam}"
+    """
+}
+
+process BCFTOOLS_STATS {
+    tag { "${patient_id}:${cell_id}" }
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports/bcftools" }, mode: 'copy', pattern: "*.bcftools_stats.txt"
+
+    input:
+    tuple val(patient_id), val(cell_id), path(vcf)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("*.bcftools_stats.txt")
+
+    script:
+    """
+    set -euo pipefail
+
+    bcftools stats "${vcf}" > "${cell_id}.monovar.bcftools_stats.txt"
+    """
+}
+
 process MAKE_MULTIQC_CUSTOM_CONTENT {
     tag "$patient_id"
     conda "envs/python_reporting.yml"
@@ -707,7 +826,7 @@ process MULTIQC_REPORT {
     publishDir { "${params.outdir}/${patient_id}/multiqc" }, mode: 'copy'
 
     input:
-    tuple val(patient_id), path(multiqc_custom_files)
+    tuple val(patient_id), path(multiqc_custom_files), path(bcftools_stats_files)
 
     output:
     tuple val(patient_id), path("${patient_id}.multiqc_report.html"), path("${patient_id}.multiqc_report_data")
@@ -718,6 +837,31 @@ process MULTIQC_REPORT {
 
     mkdir -p multiqc_inputs
     cp ${multiqc_custom_files} multiqc_inputs/
+    cp ${bcftools_stats_files} multiqc_inputs/
+    multiqc multiqc_inputs --force --outdir . --filename "${patient_id}.multiqc_report.html"
+    """
+}
+
+process MULTIQC_REPORT_WITH_BAM_QC {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/multiqc" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(multiqc_custom_files), path(bcftools_stats_files), path(samtools_stats_files), path(mosdepth_files)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.multiqc_report.html"), path("${patient_id}.multiqc_report_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p multiqc_inputs
+    cp ${multiqc_custom_files} multiqc_inputs/
+    cp ${bcftools_stats_files} multiqc_inputs/
+    cp ${samtools_stats_files} multiqc_inputs/
+    cp ${mosdepth_files} multiqc_inputs/
     multiqc multiqc_inputs --force --outdir . --filename "${patient_id}.multiqc_report.html"
     """
 }

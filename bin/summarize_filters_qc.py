@@ -46,6 +46,12 @@ def summarize_split_vcf(path):
     cell_id = Path(path).name.replace(".monovar.split.vcf", "")
     total_sites = 0
     nonref_sites = 0
+    nonref_het_sites = 0
+    nonref_hom_alt_sites = 0
+    nonref_other_gt_sites = 0
+    nonref_pass_sites = 0
+    nonref_dot_filter_sites = 0
+    nonref_filtered_sites = 0
     dp_values = []
     alt_values = []
     vaf_values = []
@@ -78,6 +84,21 @@ def summarize_split_vcf(path):
             nonref = gt not in ("0/0", "0|0", "./.", ".|.", "")
             if nonref:
                 nonref_sites += 1
+                if gt in ("0/1", "0|1", "1/0", "1|0"):
+                    nonref_het_sites += 1
+                elif gt in ("1/1", "1|1"):
+                    nonref_hom_alt_sites += 1
+                else:
+                    nonref_other_gt_sites += 1
+
+                filt = fields[6]
+                if filt == "PASS":
+                    nonref_pass_sites += 1
+                elif filt == ".":
+                    nonref_dot_filter_sites += 1
+                else:
+                    nonref_filtered_sites += 1
+
                 if dp_int is not None:
                     nonref_dp_values.append(dp_int)
                 if alt is not None:
@@ -98,6 +119,12 @@ def summarize_split_vcf(path):
         "cell_id": cell_id,
         "total_sites": total_sites,
         "nonref_sites": nonref_sites,
+        "nonref_het_sites": nonref_het_sites,
+        "nonref_hom_alt_sites": nonref_hom_alt_sites,
+        "nonref_other_gt_sites": nonref_other_gt_sites,
+        "nonref_pass_sites": nonref_pass_sites,
+        "nonref_dot_filter_sites": nonref_dot_filter_sites,
+        "nonref_filtered_sites": nonref_filtered_sites,
     }
     row.update(stats("all_dp", dp_values))
     row.update(stats("all_alt", alt_values))
@@ -149,6 +176,12 @@ def main():
         cell_id = row["cell_id"]
         row["final_variant_count"] = final.get(cell_id, {}).get("variant_count", 0)
         row["final_gene_count"] = final.get(cell_id, {}).get("gene_count", 0)
+        try:
+            nonref_sites = int(row["nonref_sites"])
+            final_variants = int(row["final_variant_count"])
+            row["final_retention_fraction"] = final_variants / nonref_sites if nonref_sites else 0
+        except (TypeError, ValueError):
+            row["final_retention_fraction"] = ""
 
     out_prefix = Path(args.out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)

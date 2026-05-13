@@ -104,6 +104,13 @@ def main():
             "nonref_dp_median": coerce(row.get("nonref_dp_median", "")),
             "nonref_alt_median": coerce(row.get("nonref_alt_median", "")),
             "nonref_vaf_median": coerce(row.get("nonref_vaf_median", "")),
+            "nonref_het_sites": coerce(row.get("nonref_het_sites", "")),
+            "nonref_hom_alt_sites": coerce(row.get("nonref_hom_alt_sites", "")),
+            "nonref_other_gt_sites": coerce(row.get("nonref_other_gt_sites", "")),
+            "nonref_pass_sites": coerce(row.get("nonref_pass_sites", "")),
+            "nonref_dot_filter_sites": coerce(row.get("nonref_dot_filter_sites", "")),
+            "nonref_filtered_sites": coerce(row.get("nonref_filtered_sites", "")),
+            "final_retention_fraction": coerce(row.get("final_retention_fraction", "")),
             "final_variant_count": coerce(row.get("final_variant_count", "")),
         }
     write_json(
@@ -207,6 +214,56 @@ def main():
         "Per-cell filter impact",
         "Variant calls",
         per_cell_drop,
+    )
+
+    genotype_balance = {
+        sample: {
+            "heterozygous_like": values.get("nonref_het_sites"),
+            "homozygous_alt_like": values.get("nonref_hom_alt_sites"),
+            "other_nonref_gt": values.get("nonref_other_gt_sites"),
+        }
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.single_cell_gt_balance_mqc.json",
+        "cnpup_single_cell_gt_balance",
+        "CN-PUP single-cell genotype balance",
+        "MonoVar non-reference genotype classes before downstream filtering. Strong shifts can indicate allele dropout, amplification bias, or caller-specific behavior.",
+        "Pre-filter genotype classes",
+        "Non-reference calls",
+        genotype_balance,
+    )
+
+    filter_status = {
+        sample: {
+            "PASS": values.get("nonref_pass_sites"),
+            "dot_unfiltered": values.get("nonref_dot_filter_sites"),
+            "filtered": values.get("nonref_filtered_sites"),
+        }
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.single_cell_filter_status_mqc.json",
+        "cnpup_single_cell_filter_status",
+        "CN-PUP pre-filter VCF FILTER status",
+        "FILTER values among MonoVar non-reference candidate calls before CN-PUP downstream filtering.",
+        "Pre-filter VCF FILTER status",
+        "Non-reference calls",
+        filter_status,
+    )
+
+    retention_fraction = {
+        sample: {"retention_fraction": values.get("final_retention_fraction")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.single_cell_retention_fraction_mqc.json",
+        "cnpup_single_cell_retention_fraction",
+        "CN-PUP final retention fraction",
+        "Fraction of MonoVar non-reference candidate calls retained after background, quality, population AF and COSMIC filtering.",
+        "Final retention fraction",
+        "Fraction retained",
+        retention_fraction,
     )
 
     write_json(

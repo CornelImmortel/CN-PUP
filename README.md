@@ -224,3 +224,28 @@ results/pipeline_info/pipeline_dag.dot
 ```
 
 Future Sarek-like additions that require extra processes are alignment-level QC (`samtools stats`, `mosdepth` coverage distributions/contig coverage) and VCF-level QC (`bcftools stats`) for the final VCFs.
+
+
+## Optional Sarek-like BAM and VCF QC
+
+To add Sarek-like native MultiQC sections, enable BAM QC:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -resume \
+  --run_monovar true \
+  --run_vep_filter true \
+  --run_bam_qc true \
+  --monovar_script /path/to/MonoVar/src/monovar.py
+```
+
+This adds:
+
+```text
+results/<patient_id>/reports/samtools/<cell_id>/<cell_id>.samtools.stats.out
+results/<patient_id>/reports/mosdepth/<cell_id>/<cell_id>.mosdepth.*
+results/<patient_id>/reports/bcftools/<cell_id>.monovar.bcftools_stats.txt
+```
+
+`bcftools stats` runs on final VCFs whenever VEP filtering is enabled. `samtools stats` and `mosdepth` require `--run_bam_qc true` because full BAM coverage QC can be expensive. For exome/target panels, set `--mosdepth_by targets.bed` to get target-region coverage distributions.

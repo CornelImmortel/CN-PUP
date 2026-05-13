@@ -1,0 +1,7 @@
+name: ctc_alignment_qc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - samtools
+  - mosdepth
