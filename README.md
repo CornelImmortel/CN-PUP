@@ -208,7 +208,7 @@ Following the nf-core/Sarek reporting pattern, the pipeline converts the CN-PUP 
 ```text
 results/<patient_id>/reports/multiqc_custom/<patient_id>.*_mqc.json
 results/<patient_id>/multiqc/<patient_id>.multiqc_report.html
-results/<patient_id>/multiqc/multiqc_data/
+results/<patient_id>/multiqc/<patient_id>.multiqc_report_data/
 ```
 
 The report currently contains filter settings, total filter impact, and per-cell pre-filter depth / alt-read / VAF summaries. The plain TSV reports are still kept in `results/<patient_id>/reports/` for scripting and auditability.

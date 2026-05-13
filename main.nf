@@ -710,7 +710,7 @@ process MULTIQC_REPORT {
     tuple val(patient_id), path(multiqc_custom_files)
 
     output:
-    tuple val(patient_id), path("${patient_id}.multiqc_report.html"), path("multiqc_data")
+    tuple val(patient_id), path("${patient_id}.multiqc_report.html"), path("${patient_id}.multiqc_report_data")
 
     script:
     """
