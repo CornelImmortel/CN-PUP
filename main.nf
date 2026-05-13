@@ -89,7 +89,7 @@ workflow {
             !isLeukocyteCell(cell_id)
         }
 
-        monovar_background_ch = target_split_ch.join(exclusion_ch)
+        monovar_background_ch = target_split_ch.combine(exclusion_ch, by: 0)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE(monovar_background_ch)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
     } else {
