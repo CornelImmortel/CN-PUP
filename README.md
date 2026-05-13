@@ -187,3 +187,16 @@ results/<patient_id>/matrices/<patient_id>.monovar.final.refread_matrix.tsv
 ```
 
 The long table keeps one row per retained variant per CTC and includes `ctc_id`, `var_id`, `refread`, `altread`, genotype fields, and any gene/consequence annotation that is present in the final VCF.
+
+
+## Step 7: QC and filter impact reports
+
+The pipeline also writes compact audit reports:
+
+```text
+results/<patient_id>/reports/<patient_id>.monovar.filter_settings.tsv
+results/<patient_id>/reports/<patient_id>.monovar.prefilter_depth_alt_qc.tsv
+results/<patient_id>/reports/<patient_id>.monovar.filter_impact.tsv
+```
+
+These reports record the active thresholds, summarize how many calls were removed, and provide per-cell pre-filter distributions for total depth, alternative reads, and VAF across all MonoVar candidate sites and non-reference sites.

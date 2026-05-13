@@ -123,6 +123,11 @@ workflow {
                 .groupTuple(by: 0)
             BUILD_MUTATION_MATRICES(final_vcfs_by_patient_ch)
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
+
+            split_vcfs_by_patient_ch = SPLIT_MONOVAR.out.map { patient_id, split_vcfs, sample_map, split_log -> tuple(patient_id, split_vcfs) }
+            qc_inputs_ch = split_vcfs_by_patient_ch.combine(BUILD_MUTATION_MATRICES.out, by: 0).combine(filter_info_ch, by: 0)
+            SUMMARIZE_FILTERS_QC(qc_inputs_ch)
+            SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
         } else {
             log.info "VEP population/COSMIC filtering skipped. Add --run_vep_filter true when ready."
         }
@@ -634,5 +639,36 @@ process BUILD_MUTATION_MATRICES {
       --caller monovar \
       --out-prefix "${patient_id}.monovar.final" \
       ${final_vcfs}
+    """
+}
+
+process SUMMARIZE_FILTERS_QC {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports" }, mode: 'copy', pattern: "*.tsv"
+
+    input:
+    tuple val(patient_id), path(split_vcfs), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(final_summary), val(ref_fasta), val(germline_mode), val(germline_vcf)
+
+    output:
+    tuple val(patient_id), path("*.filter_settings.tsv"), path("*.prefilter_depth_alt_qc.tsv"), path("*.filter_impact.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/summarize_filters_qc.py" \
+      --patient-id "${patient_id}" \
+      --caller monovar \
+      --out-prefix "${patient_id}.monovar" \
+      --final-summary "${final_summary}" \
+      --min-total-depth "${params.min_total_depth}" \
+      --min-alt-reads "${params.min_alt_reads}" \
+      --min-vaf "${params.min_vaf}" \
+      --max-population-af "${params.max_population_af}" \
+      --keep-cosmic "${params.keep_cosmic}" \
+      --germline-mode "${germline_mode}" \
+      --vep-sites-per-chunk "${params.vep_sites_per_chunk}" \
+      ${split_vcfs}
     """
 }
