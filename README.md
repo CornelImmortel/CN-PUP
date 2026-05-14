@@ -249,3 +249,22 @@ results/<patient_id>/reports/bcftools/<cell_id>.monovar.bcftools_stats.txt
 ```
 
 `bcftools stats` runs on final VCFs whenever VEP filtering is enabled. `samtools stats` and `mosdepth` require `--run_bam_qc true` because full BAM coverage QC can be expensive. For exome/target panels, set `--mosdepth_by targets.bed` to get target-region coverage distributions.
+
+
+## SNV biology report
+
+When `--run_vep_filter true` is active, the pipeline also renders a patient-level SNV report from the final long table and matrices:
+
+```text
+results/<patient_id>/snv_report/<patient_id>.snv_report.html
+results/<patient_id>/snv_report/<patient_id>.monovar.maf
+```
+
+The report reuses established R/Bioconductor visualization packages rather than hand-rolling every plot:
+
+- `maftools` for cancer-style MAF summaries, oncoplots, Ti/Tv and VAF-style views;
+- `UpSetR` for CTC overlap sets;
+- `ComplexHeatmap` for clustered binary mutation matrices and Jaccard heatmaps;
+- `circlize` for a Circos-like genome overview.
+
+Set `--run_snv_report false` to skip this optional HTML report if the R reporting environment is not needed for a quick pipeline test.

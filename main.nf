@@ -15,6 +15,7 @@ params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
 params.run_vep_filter = params.run_vep_filter ?: false
+params.run_snv_report = params.run_snv_report == null ? true : params.run_snv_report
 params.run_bam_qc = params.run_bam_qc ?: false
 params.mosdepth_threads = params.mosdepth_threads ?: 2
 params.mosdepth_by = params.mosdepth_by ?: ""
@@ -152,6 +153,11 @@ workflow {
                 .groupTuple(by: 0)
             BUILD_MUTATION_MATRICES(final_vcfs_by_patient_ch)
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
+
+            if (params.run_snv_report) {
+                SNV_HTML_REPORT(BUILD_MUTATION_MATRICES.out)
+                SNV_HTML_REPORT.out.view { "SNV HTML report: ${it[1]}" }
+            }
 
             split_vcfs_by_patient_ch = SPLIT_MONOVAR.out.map { patient_id, split_vcfs, sample_map, split_log -> tuple(patient_id, split_vcfs) }
             qc_inputs_ch = split_vcfs_by_patient_ch.combine(BUILD_MUTATION_MATRICES.out, by: 0).combine(filter_info_ch, by: 0)
@@ -694,6 +700,26 @@ process BUILD_MUTATION_MATRICES {
       --caller monovar \
       --out-prefix "${patient_id}.monovar.final" \
       ${final_vcfs}
+    """
+}
+
+
+process SNV_HTML_REPORT {
+    tag "$patient_id"
+    conda "envs/snv_report.yml"
+    publishDir { "${params.outdir}/${patient_id}/snv_report" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.snv_report.html"), path("${patient_id}.monovar.maf")
+
+    script:
+    """
+    set -euo pipefail
+
+    Rscript -e 'rmarkdown::render("${projectDir}/assets/snv_report.Rmd", output_file="${patient_id}.snv_report.html", output_dir=".", params=list(patient_id="${patient_id}", long_table="${long_table}", binary_matrix="${binary_matrix}", altread_matrix="${altread_matrix}", refread_matrix="${refread_matrix}", summary_table="${summary_table}", out_prefix="${patient_id}.monovar"))'
     """
 }
 

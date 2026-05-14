@@ -1,0 +1,272 @@
+---
+title: "CN-PUP SNV Report"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+params:
+  patient_id: "patient"
+  long_table: ""
+  binary_matrix: ""
+  altread_matrix: ""
+  refread_matrix: ""
+  summary_table: ""
+  out_prefix: "snv_report"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 11, fig.height = 7)
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(DT)
+  library(UpSetR)
+  library(maftools)
+  library(ComplexHeatmap)
+  library(circlize)
+})
+
+patient_id <- params$patient_id
+long <- read_tsv(params$long_table, show_col_types = FALSE)
+binary <- read_tsv(params$binary_matrix, show_col_types = FALSE)
+altread <- read_tsv(params$altread_matrix, show_col_types = FALSE)
+refread <- read_tsv(params$refread_matrix, show_col_types = FALSE)
+summary_tbl <- read_tsv(params$summary_table, show_col_types = FALSE)
+
+if (!"gene_symbol" %in% names(long)) long$gene_symbol <- ""
+if (!"consequence" %in% names(long)) long$consequence <- ""
+if (!"impact" %in% names(long)) long$impact <- ""
+
+long <- long %>%
+  mutate(
+    POS = as.integer(POS),
+    DP_num = suppressWarnings(as.numeric(DP)),
+    altread_num = suppressWarnings(as.numeric(altread)),
+    refread_num = suppressWarnings(as.numeric(refread)),
+    VAF = if_else((altread_num + refread_num) > 0, altread_num / (altread_num + refread_num), NA_real_),
+    gene_display = if_else(is.na(gene_symbol) | gene_symbol == "", paste0("intergenic_", CHROM), gene_symbol),
+    Variant_Classification = case_when(
+      str_detect(consequence, "missense_variant") ~ "Missense_Mutation",
+      str_detect(consequence, "stop_gained") ~ "Nonsense_Mutation",
+      str_detect(consequence, "frameshift") ~ "Frame_Shift",
+      str_detect(consequence, "splice") ~ "Splice_Site",
+      str_detect(consequence, "synonymous_variant") ~ "Silent",
+      str_detect(consequence, "intron") ~ "Intron",
+      str_detect(consequence, "UTR") ~ "UTR",
+      TRUE ~ "Variant"
+    ),
+    Variant_Type = case_when(
+      nchar(REF) == 1 & nchar(ALT) == 1 ~ "SNP",
+      nchar(REF) < nchar(ALT) ~ "INS",
+      nchar(REF) > nchar(ALT) ~ "DEL",
+      TRUE ~ "ONP"
+    )
+  )
+
+make_maf <- function(df) {
+  df %>%
+    transmute(
+      Hugo_Symbol = gene_display,
+      Entrez_Gene_Id = 0,
+      Center = "CN-PUP",
+      NCBI_Build = "GRCh38",
+      Chromosome = str_replace(CHROM, "^chr", ""),
+      Start_Position = POS,
+      End_Position = POS + pmax(nchar(REF), 1) - 1,
+      Strand = "+",
+      Variant_Classification = Variant_Classification,
+      Variant_Type = Variant_Type,
+      Reference_Allele = REF,
+      Tumor_Seq_Allele1 = REF,
+      Tumor_Seq_Allele2 = ALT,
+      Tumor_Sample_Barcode = ctc_id,
+      t_ref_count = refread_num,
+      t_alt_count = altread_num,
+      t_depth = DP_num,
+      i_TumorVAF_WU = VAF,
+      HGVSp_Short = ""
+    )
+}
+
+maf_df <- make_maf(long)
+maf_path <- paste0(params$out_prefix, ".maf")
+write_tsv(maf_df, maf_path)
+maf_obj <- tryCatch(read.maf(maf = maf_path, verbose = FALSE), error = function(e) NULL)
+
+mat <- binary %>% as.data.frame()
+rownames(mat) <- mat$var_id
+mat$var_id <- NULL
+mat <- as.matrix(mat)
+mode(mat) <- "numeric"
+cell_ids <- colnames(mat)
+variant_shared_n <- rowSums(mat > 0)
+private_variants <- names(variant_shared_n[variant_shared_n == 1])
+shared2_variants <- names(variant_shared_n[variant_shared_n >= 2])
+all_shared_variants <- names(variant_shared_n[variant_shared_n == length(cell_ids)])
+```
+
+# Overview
+
+```{r overview-table}
+overview <- tibble(
+  metric = c("patient_id", "cells", "retained_variant_rows", "unique_variants", "variants_shared_by_2_or_more_ctcs", "variants_shared_by_all_ctcs", "private_variants"),
+  value = c(patient_id, length(cell_ids), nrow(long), nrow(mat), length(shared2_variants), length(all_shared_variants), length(private_variants))
+)
+datatable(overview, rownames = FALSE, options = list(dom = 't'))
+```
+
+```{r burden}
+summary_tbl %>%
+  ggplot(aes(x = reorder(ctc_id, variant_count), y = variant_count)) +
+  geom_col(fill = "#3567a8") +
+  coord_flip() +
+  labs(x = "CTC", y = "Retained SNVs", title = "Final SNV burden per CTC") +
+  theme_minimal(base_size = 12)
+```
+
+# Shared And Private SNVs
+
+```{r upset, fig.height=7}
+if (length(cell_ids) >= 2 && nrow(mat) > 0) {
+  upset(as.data.frame(mat > 0), nsets = min(length(cell_ids), 30), order.by = "freq")
+}
+```
+
+```{r heatmap, fig.height=9}
+if (nrow(mat) > 1 && ncol(mat) > 1) {
+  top_vars <- names(sort(variant_shared_n, decreasing = TRUE))[seq_len(min(200, length(variant_shared_n)))]
+  Heatmap(mat[top_vars, , drop = FALSE],
+          name = "SNV",
+          col = c("0" = "white", "1" = "#203864"),
+          cluster_rows = TRUE,
+          cluster_columns = TRUE,
+          show_row_names = FALSE,
+          column_title = "Clustered binary SNV matrix")
+}
+```
+
+```{r jaccard}
+if (ncol(mat) > 1) {
+  jac <- matrix(0, ncol(mat), ncol(mat), dimnames = list(cell_ids, cell_ids))
+  for (i in seq_along(cell_ids)) {
+    for (j in seq_along(cell_ids)) {
+      a <- mat[, i] > 0
+      b <- mat[, j] > 0
+      jac[i, j] <- ifelse(sum(a | b) > 0, sum(a & b) / sum(a | b), 0)
+    }
+  }
+  Heatmap(jac,
+          name = "Jaccard",
+          col = colorRamp2(c(0, 0.5, 1), c("#f7fbff", "#6baed6", "#08306b")),
+          cluster_rows = TRUE,
+          cluster_columns = TRUE,
+          column_title = "CTC similarity based on shared SNVs")
+}
+```
+
+# Cancer-Style SNV Plots From maftools
+
+```{r maftools-summary}
+if (!is.null(maf_obj) && nrow(maf_df) > 0) {
+  plotmafSummary(maf = maf_obj, rmOutlier = FALSE, addStat = 'median', dashboard = TRUE)
+}
+```
+
+```{r oncoplot}
+if (!is.null(maf_obj) && nrow(maf_df) > 0) {
+  oncoplot(maf = maf_obj, top = min(25, length(unique(maf_df$Hugo_Symbol))), removeNonMutated = TRUE)
+}
+```
+
+```{r titv}
+if (!is.null(maf_obj) && nrow(maf_df) > 0) {
+  titv_res <- tryCatch(titv(maf = maf_obj, plot = FALSE, useSyn = TRUE), error = function(e) NULL)
+  if (!is.null(titv_res)) plotTiTv(res = titv_res)
+}
+```
+
+```{r vaf}
+if (nrow(long) > 0) {
+  long %>%
+    filter(!is.na(VAF)) %>%
+    ggplot(aes(x = VAF, fill = ctc_id)) +
+    geom_histogram(bins = 30, alpha = 0.75, position = "identity") +
+    facet_wrap(~ctc_id, scales = "free_y") +
+    labs(x = "Variant allele fraction", y = "SNVs", title = "VAF distribution per CTC") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "none")
+}
+```
+
+# Circos-Like Genome View
+
+```{r circos, fig.height=8, fig.width=8}
+if (nrow(long) > 0) {
+  circos.clear()
+  circos.par(start.degree = 90, gap.degree = 1, track.margin = c(0.01, 0.01))
+  chrom_df <- long %>%
+    mutate(chr_clean = str_replace(CHROM, "^chr", "")) %>%
+    group_by(chr_clean) %>%
+    summarise(max_pos = max(POS, na.rm = TRUE), .groups = "drop") %>%
+    arrange(factor(chr_clean, levels = c(as.character(1:22), "X", "Y", "M", "MT")))
+  circos.initialize(factors = chrom_df$chr_clean, xlim = cbind(rep(0, nrow(chrom_df)), chrom_df$max_pos))
+  circos.trackPlotRegion(ylim = c(0, 1), panel.fun = function(x, y) {
+    chr <- CELL_META$sector.index
+    circos.text(CELL_META$xcenter, CELL_META$ylim[2], chr, cex = 0.6, facing = "clockwise", niceFacing = TRUE)
+  }, bg.border = NA, track.height = 0.06)
+  plot_df <- long %>% mutate(chr_clean = str_replace(CHROM, "^chr", ""), shared_n = variant_shared_n[var_id])
+  colors <- ifelse(plot_df$shared_n == length(cell_ids), "#b2182b", ifelse(plot_df$shared_n >= 2, "#2166ac", "#999999"))
+  circos.trackPlotRegion(ylim = c(0, max(plot_df$shared_n, na.rm = TRUE) + 1), panel.fun = function(x, y) {
+    chr <- CELL_META$sector.index
+    dd <- plot_df[plot_df$chr_clean == chr, ]
+    if (nrow(dd) > 0) circos.points(dd$POS, dd$shared_n, col = colors[plot_df$chr_clean == chr], pch = 16, cex = 0.45)
+  }, bg.border = "#dddddd", track.height = 0.22)
+  legend("bottomleft", legend = c("all CTCs", ">=2 CTCs", "private"), col = c("#b2182b", "#2166ac", "#999999"), pch = 16, bty = "n", cex = 0.8)
+  circos.clear()
+}
+```
+
+# Shared Variant Tables
+
+## Variants Shared By All CTCs
+
+```{r all-shared-table}
+all_shared_table <- long %>%
+  filter(var_id %in% all_shared_variants) %>%
+  arrange(CHROM, POS, ctc_id) %>%
+  select(ctc_id, var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, altread, VAF)
+datatable(all_shared_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+```
+
+## Variants Shared By At Least Two CTCs
+
+```{r shared2-table}
+shared2_table <- long %>%
+  filter(var_id %in% shared2_variants) %>%
+  mutate(shared_ctc_count = variant_shared_n[var_id]) %>%
+  arrange(desc(shared_ctc_count), CHROM, POS, ctc_id) %>%
+  select(shared_ctc_count, ctc_id, var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, altread, VAF)
+datatable(shared2_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+```
+
+# Per-CTC Pages
+
+```{r per-ctc, results='asis'}
+for (cell in cell_ids) {
+  cat("\n\n## ", cell, "\n\n", sep = "")
+  dd <- long %>% filter(ctc_id == cell) %>% arrange(CHROM, POS)
+  cat("Retained SNVs: ", nrow(dd), "\n\n", sep = "")
+  if (nrow(dd) > 0) {
+    print(
+      dd %>%
+        select(var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, refread, altread, VAF, GT, FILTER) %>%
+        datatable(rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))
+    )
+  }
+}
+```

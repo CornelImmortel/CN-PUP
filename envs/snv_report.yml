@@ -1,0 +1,19 @@
+name: ctc_snv_report
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.3
+  - r-rmarkdown
+  - r-knitr
+  - r-dplyr
+  - r-tidyr
+  - r-readr
+  - r-stringr
+  - r-ggplot2
+  - r-dt
+  - r-upsetr
+  - r-htmltools
+  - bioconductor-maftools
+  - bioconductor-complexheatmap
+  - r-circlize
