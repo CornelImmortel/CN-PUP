@@ -580,8 +580,8 @@ process VEP_ANNOTATE_CHUNK {
     """
     set -euo pipefail
 
-    out="${chunk.simpleName}.vep.tsv"
-    log="${chunk.simpleName}.vep_chunk.log"
+    out="${chunk.name}.vep.tsv"
+    log="${chunk.name}.vep_chunk.log"
 
     if [[ ! -s "${chunk}" ]]; then
       printf '#Uploaded_variation\tLocation\tAllele\tGene\tSYMBOL\tFeature\tConsequence\tIMPACT\tHGVSc\tHGVSp\tExisting_variation\tMAX_AF\tMAX_AF_POPS\tAF\tgnomADe_AF\tgnomADg_AF\n' > "\$out"
