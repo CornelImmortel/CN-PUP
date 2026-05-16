@@ -9,3 +9,5 @@ results/*
 *.report.html
 *.dag.*
 configs/patients.tsv
+__pycache__/
+*.pyc

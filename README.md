@@ -5,10 +5,12 @@ Nextflow pipeline under development for CTC single-cell variant calling and filt
 The final goal is to automate:
 
 1. MonoVar calling from patient-level BAM lists.
-2. Germline/background exclusion using precomputed VCFs, bulk DeepVariant calls, leukocyte calls, or combined modes.
-3. Quality filtering, SNV restriction, normalization, and subtraction.
-4. VEP population AF / COSMIC filtering.
-5. Long tables, matrices, Shiny app inputs, and QC reports.
+2. Optional SCcaller calling from existing cell BAMs and matched bulk BAMs.
+3. Germline/background exclusion using precomputed VCFs, bulk DeepVariant calls, leukocyte calls, or combined modes.
+4. External caller ingestion for SCcaller, HaplotypeCaller, DeepVariant, and MonoVar VCFs.
+5. Quality filtering, SNV restriction, normalization, and subtraction.
+6. VEP population AF / COSMIC filtering.
+7. Caller comparison: long tables, matrices, CTC-SCITE inputs, Shiny app inputs, and QC reports.
 
 ## Step 0
 
@@ -38,6 +40,186 @@ Expected output:
 
 ```text
 results/validation/<patient_id>.input_check.txt
+```
+
+## Main operating modes
+
+CN-PUP can now be used in three increasingly broad modes.
+
+## Input Builder
+
+CN-PUP includes a small static browser interface for building the required
+input files:
+
+```text
+interface/index.html
+```
+
+Open it directly in a browser. It generates:
+
+```text
+patients.tsv
+cells.tsv
+monovar_bams.txt
+caller_vcfs.tsv
+cnpup_command.sh
+```
+
+The interface is intentionally static HTML/JavaScript. It does not upload data,
+does not need a web server, and does not run Nextflow. It only helps users make
+valid TSV inputs and a launch command. After downloading the files, place them
+under `configs/` or adjust the generated command paths.
+
+MonoVar only:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --run_monovar true \
+  --monovar_script /path/to/MonoVar/src/monovar.py
+```
+
+Compare existing caller VCFs:
+
+```bash
+cp configs/caller_vcfs.tsv.example configs/caller_vcfs.tsv
+
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.tsv \
+  --run_external_callers true \
+  --run_comparison true \
+  --caller_vcfs configs/caller_vcfs.tsv
+```
+
+Run MonoVar, optionally run SCcaller, and compare with external Sarek callers:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.tsv \
+  --run_monovar true \
+  --run_sccaller true \
+  --run_external_callers true \
+  --run_comparison true \
+  --monovar_script /path/to/MonoVar/src/monovar.py \
+  --sccaller_script /path/to/sccaller_v2.0.0.py \
+  --sccaller_hsnp_vcf /path/to/bulk.hsnp.biallelic.dbsnp.vcf \
+  --caller_vcfs configs/caller_vcfs.tsv
+```
+
+The comparison path intentionally reuses the validated downstream code from
+`mutation_matrix_pipeline`, vendored under `bin/mutation_matrix/`, instead of
+reimplementing the filtering and matrix logic from scratch.
+
+## External caller manifest
+
+External caller VCFs are listed in `configs/caller_vcfs.tsv`:
+
+```text
+patient_id    cell_id    caller           vcf_path                         sccaller_mode
+Patient_03    SRR8617653 haplotypecaller  /path/to/cell.haplotypecaller.vcf.gz
+Patient_03    SRR8617653 deepvariant      /path/to/cell.deepvariant.vcf.gz
+Patient_03    SRR8617653 sccaller         /path/to/cell.sccaller.vcf       external_bulk
+```
+
+Supported caller names:
+
+- `monovar`
+- `sccaller`
+- `haplotypecaller`
+- `deepvariant`
+
+## Patient 03 WXS CTC-only MonoVar config
+
+The repository includes a clean Patient 03 WXS CTC-only setup for rerunning
+MonoVar without the leukocyte in the joint calling cohort:
+
+```text
+configs/patients.patient_03_wxs_ctc_only.tsv
+configs/patient_03_wxs_ctc_only_cells.tsv
+configs/patient_03_wxs_ctc_only_bams.txt
+```
+
+This uses:
+
+```text
+germline_mode = no_germline
+```
+
+That mode validates inputs and runs MonoVar/splitting without requiring an
+immediate background VCF. Use it when you want clean CTC-only MonoVar split VCFs
+first, then apply matched leukocyte/bulk subtraction later during comparison.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.patient_03_wxs_ctc_only.tsv \
+  --run_monovar true \
+  --monovar_script /path/to/monovar.py \
+  --monovar_threads 6 \
+  -resume
+```
+
+All caller branches are normalized into the same downstream contract:
+
+```text
+results/<patient_id>/comparable_calls/<caller>/<cell_id>.<caller>.comparable.vcf.gz
+```
+
+Those comparable VCFs are then converted into long tables, mutation matrices,
+CTC-SCITE inputs, and overlap QC reports.
+
+SCcaller supports the same comparison modes as `mutation_matrix_pipeline`:
+
+- `so_true`: require SCcaller internal `SO=True`.
+- `external_bulk`: ignore `SO`, then subtract the configured external germline/bulk VCF.
+- `so_true_and_external_bulk`: require `SO=True`, then subtract external bulk.
+- `no_bulk`: diagnostic mode; no internal `SO` requirement and no external subtraction.
+
+## Optional SCcaller calling from BAMs
+
+CN-PUP can call SCcaller from existing aligned BAMs. This first implementation
+does not port the full SCcaller FASTQ-to-BAM preprocessing pipeline; it assumes
+the cell BAMs and matched bulk BAM already exist.
+
+Required inputs:
+
+- `cell_metadata` in the patient sheet, with one row per cell BAM.
+- `bulk_bam` in the patient sheet.
+- `ref_fasta` in the patient sheet.
+- `--sccaller_script /path/to/sccaller_v2.0.0.py`.
+- `--sccaller_hsnp_vcf /path/to/bulk.hsnp.biallelic.dbsnp.vcf`.
+
+The SCcaller process uses its own Conda environment:
+
+```text
+envs/sccaller.yml
+```
+
+It is separate from the MonoVar environment and includes Python 2.7, `pysam`
+0.15.1, `numpy`, and `samtools`, matching the SCcaller core requirements.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.sccaller.tsv \
+  --run_sccaller true \
+  --run_comparison true \
+  --sccaller_script /path/to/SCcaller-core/sccaller_v2.0.0.py \
+  --sccaller_hsnp_vcf /path/to/bulk.hg38.hsnp.biallelic.dbsnp.vcf
+```
+
+Outputs:
+
+```text
+results/<patient_id>/raw_calls/sccaller/<cell_id>.sccaller.vcf
+results/<patient_id>/processed_calls/sccaller/<cell_id>.somatic.snv.vcf
+results/<patient_id>/comparable_calls/sccaller/<cell_id>.sccaller.comparable.vcf.gz
 ```
 
 ## Germline modes planned

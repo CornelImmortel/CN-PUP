@@ -1,0 +1,4 @@
+patient_id	ref_fasta	monovar_bam_list	cell_metadata	germline_mode	germline_vcf	bulk_bam	leukocyte_bam	leukocyte_vcf
+Patient_03	/path/to/Homo_sapiens_assembly38.fasta	/path/to/patient_03.bam.list	configs/patient_03_wgs_cells.tsv.example	precomputed_vcf	/path/to/bulk_or_germline_exclusion.vcf.gz	/path/to/bulk.bam	NA	NA
+# SCcaller-from-BAM mode uses cell_metadata for cell BAMs and bulk_bam for the matched bulk sample.
+# Set --sccaller_hsnp_vcf to the bulk heterozygous SNP VCF expected by SCcaller.

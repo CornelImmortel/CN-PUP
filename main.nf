@@ -14,6 +14,16 @@ params.monovar_script = params.monovar_script ?: ""
 params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
 params.run_monovar = params.run_monovar ?: false
+params.run_sccaller = params.run_sccaller ?: false
+params.run_external_callers = params.run_external_callers ?: false
+params.run_comparison = params.run_comparison ?: false
+params.caller_vcfs = params.caller_vcfs ?: "configs/caller_vcfs.tsv"
+params.sccaller_script = params.sccaller_script ?: ""
+params.sccaller_cpu = params.sccaller_cpu ?: 8
+params.sccaller_bias = params.sccaller_bias ?: 0.75
+params.sccaller_engine = params.sccaller_engine ?: "samtools"
+params.sccaller_mode = params.sccaller_mode ?: "external_bulk"
+params.sccaller_hsnp_vcf = params.sccaller_hsnp_vcf ?: ""
 params.run_vep_filter = params.run_vep_filter ?: false
 params.run_snv_report = params.run_snv_report == null ? true : params.run_snv_report
 params.run_bam_qc = params.run_bam_qc ?: false
@@ -77,6 +87,35 @@ workflow {
     checked_ch = CHECK_INPUTS(patients_ch)
     checked_ch.view { "Validated patient: ${it[0]} -> ${it[9]}" }
 
+    checked_info_ch = checked_ch.map { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
+        tuple(patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam)
+    }
+
+    comparison_inputs = Channel.empty()
+
+    if (params.run_external_callers) {
+        external_rows_ch = Channel
+            .fromPath(params.caller_vcfs, checkIfExists: true)
+            .splitCsv(header: true, sep: '\t')
+            .filter { row -> row.patient_id && !row.patient_id.toString().startsWith('#') }
+            .map { row ->
+                tuple(
+                    row.patient_id.toString(),
+                    [
+                        row.cell_id.toString(),
+                        row.caller.toString(),
+                        resolveInputPath(row.vcf_path),
+                        row.sccaller_mode == null ? '' : row.sccaller_mode.toString()
+                    ]
+                )
+            }
+            .groupTuple(by: 0)
+
+        STANDARDIZE_EXTERNAL_CALLERS(external_rows_ch.join(checked_info_ch, by: 0))
+        comparison_inputs = comparison_inputs.mix(STANDARDIZE_EXTERNAL_CALLERS.out)
+        STANDARDIZE_EXTERNAL_CALLERS.out.view { "External comparable VCFs for ${it[0]}" }
+    }
+
     if (params.run_bam_qc) {
         bam_qc_input_ch = checked_ch.flatMap { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
             cellMetadataRows(patient_id, cell_metadata)
@@ -125,6 +164,10 @@ workflow {
         monovar_background_ch = target_split_ch.combine(exclusion_ch, by: 0)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE(monovar_background_ch)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
+        monovar_comparison_ch = FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out
+            .map { patient_id, cell_id, norm_vcf, comparable_vcf, log_file -> tuple(patient_id, comparable_vcf) }
+            .groupTuple(by: 0)
+        comparison_inputs = comparison_inputs.mix(monovar_comparison_ch)
 
         if (params.run_vep_filter) {
             MAKE_VEP_INPUT_CHUNKS(FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out)
@@ -195,6 +238,228 @@ workflow {
     } else {
         log.info "MonoVar calling skipped. Re-run with --run_monovar true when ready."
     }
+
+    if (params.run_sccaller) {
+        sccaller_input_ch = checked_info_ch.flatMap { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam ->
+            cellMetadataRows(patient_id, cell_metadata).findAll { row -> !isLeukocyteCell(row[1]) }.collect { row ->
+                tuple(row[0], row[1], row[2], ref_fasta, bulk_bam, resolveInputPath(params.sccaller_hsnp_vcf))
+            }
+        }
+        RUN_SCCALLER_FROM_BAM(sccaller_input_ch)
+        sccaller_by_patient_ch = RUN_SCCALLER_FROM_BAM.out
+            .map { patient_id, cell_id, raw_vcf -> tuple(patient_id, [cell_id, raw_vcf]) }
+            .groupTuple(by: 0)
+        STANDARDIZE_INTERNAL_SCCALLER(sccaller_by_patient_ch.join(checked_info_ch, by: 0))
+        comparison_inputs = comparison_inputs.mix(STANDARDIZE_INTERNAL_SCCALLER.out)
+        STANDARDIZE_INTERNAL_SCCALLER.out.view { "Internal SCcaller comparable VCFs for ${it[0]}" }
+    }
+
+    if (params.run_comparison) {
+        comparison_by_patient_ch = comparison_inputs
+            .flatMap { patient_id, vcfs ->
+                def files = vcfs instanceof List ? vcfs : [vcfs]
+                files.collect { vcf -> tuple(patient_id, vcf) }
+            }
+            .groupTuple(by: 0)
+        BUILD_CALLER_COMPARISON(comparison_by_patient_ch)
+        BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
+    }
+}
+
+process STANDARDIZE_EXTERNAL_CALLERS {
+    tag "$patient_id"
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/processed_calls" }, mode: 'copy', pattern: "comparison_project/processed_calls/**"
+    publishDir { "${params.outdir}/${patient_id}/normalized_calls" }, mode: 'copy', pattern: "comparison_project/normalized_calls/**"
+    publishDir { "${params.outdir}/${patient_id}/comparable_calls" }, mode: 'copy', pattern: "comparison_project/comparable_calls/**"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
+
+    input:
+    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam)
+
+    output:
+    tuple val(patient_id), path("comparison_project/comparable_calls/*/*.comparable.vcf.gz")
+
+    script:
+    def samples_tsv = rows.collect { r ->
+        def mode = r[3] ?: params.sccaller_mode
+        "${r[0]}\t${r[1].toString().toLowerCase()}\t${r[2]}\t${mode}"
+    }.join('\n')
+    """
+    set -euo pipefail
+
+    mkdir -p comparison_project/config comparison_project/bulk_exclusion comparison_project/logs
+    cat > comparison_project/config/samples.tsv <<'EOF'
+sample_id	caller	raw_vcf	sccaller_mode
+${samples_tsv}
+EOF
+
+    if [[ "${germline_mode}" == "precomputed_vcf" && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
+      bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
+      | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.external_exclusion.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
+    fi
+
+    export MIN_TOTAL_DEPTH="${params.min_total_depth}"
+    export MIN_ALT_READS="${params.min_alt_reads}"
+    export MIN_VAF="${params.min_vaf}"
+    export SCCALLER_SOMATIC_MODE="${params.sccaller_mode}"
+
+    bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
+      "\$PWD/comparison_project" \\
+      "${ref_fasta}" \\
+      "\$PWD/comparison_project/config/samples.tsv"
+    """
+}
+
+process RUN_SCCALLER_FROM_BAM {
+    tag { "${patient_id}:${cell_id}" }
+    cpus params.sccaller_cpu
+    conda "envs/sccaller.yml"
+    publishDir { "${params.outdir}/${patient_id}/raw_calls/sccaller" }, mode: 'copy', pattern: "*.sccaller.vcf"
+    publishDir { "${params.outdir}/${patient_id}/processed_calls/sccaller" }, mode: 'copy', pattern: "*.somatic.snv.vcf"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.sccaller.log"
+
+    input:
+    tuple val(patient_id), val(cell_id), val(cell_bam), val(ref_fasta), val(bulk_bam), val(hsnp_vcf)
+
+    output:
+    tuple val(patient_id), val(cell_id), path("${cell_id}.sccaller.vcf")
+
+    script:
+    """
+    set -euo pipefail
+
+    if [[ -z "${params.sccaller_script}" ]]; then
+      echo "--sccaller_script is required when --run_sccaller true" >&2
+      exit 1
+    fi
+    if [[ -z "${hsnp_vcf}" || "${hsnp_vcf}" == "NA" ]]; then
+      echo "--sccaller_hsnp_vcf is required when --run_sccaller true" >&2
+      exit 1
+    fi
+    if [[ -z "${bulk_bam}" || "${bulk_bam}" == "NA" ]]; then
+      echo "bulk_bam in the patient sheet is required when --run_sccaller true" >&2
+      exit 1
+    fi
+
+    mkdir -p sccaller_work
+    python "${params.sccaller_script}" \\
+      --bam "${cell_bam}" \\
+      --fasta "${ref_fasta}" \\
+      --bulk "${bulk_bam}" \\
+      --output "${cell_id}.sccaller.vcf" \\
+      --snp_type hsnp \\
+      --snp_in "${hsnp_vcf}" \\
+      --cpu_num "${params.sccaller_cpu}" \\
+      --bias "${params.sccaller_bias}" \\
+      --wkdir sccaller_work \\
+      --engine "${params.sccaller_engine}" \\
+      > "${cell_id}.sccaller.log" 2>&1
+
+    awk 'BEGIN{FS=OFS="\\t"} /^#/ {print; next} /0\\/1/ && /True/ && \$7=="." && length(\$5)==1 {split(\$10,a,":"); split(a[2],ad,","); if (ad[1]+ad[2]>=20) print}' \\
+      "${cell_id}.sccaller.vcf" > "${cell_id}.somatic.snv.vcf"
+    """
+}
+
+process STANDARDIZE_INTERNAL_SCCALLER {
+    tag "$patient_id"
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/normalized_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/normalized_calls/sccaller/*"
+    publishDir { "${params.outdir}/${patient_id}/comparable_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/comparable_calls/sccaller/*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
+
+    input:
+    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam)
+
+    output:
+    tuple val(patient_id), path("comparison_project/comparable_calls/sccaller/*.comparable.vcf.gz")
+
+    script:
+    def samples_tsv = rows.collect { r ->
+        "${r[0]}\tsccaller\t${r[1]}\t${params.sccaller_mode}"
+    }.join('\n')
+    """
+    set -euo pipefail
+
+    mkdir -p comparison_project/config comparison_project/bulk_exclusion comparison_project/logs
+    cat > comparison_project/config/samples.tsv <<'EOF'
+sample_id	caller	raw_vcf	sccaller_mode
+${samples_tsv}
+EOF
+
+    if [[ "${germline_mode}" == "precomputed_vcf" && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
+      bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
+      | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.external_exclusion.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
+    fi
+
+    export MIN_TOTAL_DEPTH="${params.min_total_depth}"
+    export MIN_ALT_READS="${params.min_alt_reads}"
+    export MIN_VAF="${params.min_vaf}"
+    export SCCALLER_SOMATIC_MODE="${params.sccaller_mode}"
+
+    bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
+      "\$PWD/comparison_project" \\
+      "${ref_fasta}" \\
+      "\$PWD/comparison_project/config/samples.tsv"
+    """
+}
+
+process BUILD_CALLER_COMPARISON {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/caller_comparison" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(comparable_vcfs)
+
+    output:
+    tuple val(patient_id), path("cache/merged/all_mutations_long.annotated.tsv.gz"), path("matrices/*.tsv"), path("ctc_scite_inputs/*.tsv"), path("reports/overlap_qc.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p comparable_calls cache/per_sample cache/merged matrices ctc_scite_inputs reports
+    for vcf in ${comparable_vcfs}; do
+      caller=\$(basename "\$vcf" | sed -E 's/^.+\\.([^.]+)\\.comparable\\.vcf\\.gz\$/\\1/')
+      mkdir -p "comparable_calls/\$caller"
+      cp "\$vcf" "comparable_calls/\$caller/"
+      if [[ -f "\${vcf}.tbi" ]]; then
+        cp "\${vcf}.tbi" "comparable_calls/\$caller/"
+      fi
+    done
+
+    python "${projectDir}/bin/mutation_matrix/03_vcf_to_long_table.py" \\
+      --project "\$PWD" \\
+      --input-root "\$PWD/comparable_calls" \\
+      --output-dir "\$PWD/cache/per_sample"
+
+    python "${projectDir}/bin/mutation_matrix/04_merge_long_tables.py" \\
+      --input-dir "\$PWD/cache/per_sample" \\
+      --output "\$PWD/cache/merged/all_mutations_long.tsv.gz"
+
+    python "${projectDir}/bin/mutation_matrix/04_fill_missing_annotations.py" \\
+      --input "\$PWD/cache/merged/all_mutations_long.tsv.gz" \\
+      --output "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz"
+
+    python "${projectDir}/bin/mutation_matrix/05_build_matrices.py" \\
+      --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
+      --matrix-dir "\$PWD/matrices" \\
+      --ctc-scite-dir "\$PWD/ctc_scite_inputs" \\
+      --min-total-depth "${params.min_total_depth}" \\
+      --min-alt-reads "${params.min_alt_reads}" \\
+      --min-vaf "${params.min_vaf}"
+
+    python "${projectDir}/bin/mutation_matrix/06_overlap_qc.py" \\
+      --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
+      --output "\$PWD/reports/overlap_qc.tsv"
+    """
 }
 
 process CHECK_INPUTS {
@@ -228,16 +493,20 @@ process CHECK_INPUTS {
 
     test -n "${patient_id}" || { echo "ERROR: missing patient_id" >&2; exit 1; }
     test -s "${ref_fasta}" || { echo "ERROR: ref_fasta not found: ${ref_fasta}" >&2; exit 1; }
-    test -s "${monovar_bam_list}" || { echo "ERROR: monovar_bam_list not found: ${monovar_bam_list}" >&2; exit 1; }
-    test -s "${cell_metadata}" || { echo "ERROR: cell_metadata not found: ${cell_metadata}" >&2; exit 1; }
+    if [[ "${params.run_monovar}" == "true" ]]; then
+      test -s "${monovar_bam_list}" || { echo "ERROR: monovar_bam_list not found: ${monovar_bam_list}" >&2; exit 1; }
+    fi
 
-    awk -F '\t' -v patient_id="${patient_id}" '
-      NR == 1 { next }
-      NF < 4 || \$1 == "" || \$2 == "" || \$3 == "" || \$4 == "" { print "ERROR: invalid cell_metadata row " NR > "/dev/stderr"; exit 1 }
-      \$1 != patient_id { print "ERROR: cell_metadata patient_id mismatch on row " NR ": " \$1 > "/dev/stderr"; exit 1 }
-      { count++ }
-      END { if (count < 1) { print "ERROR: no cells found in cell_metadata" > "/dev/stderr"; exit 1 } }
-    ' "${cell_metadata}"
+    if [[ "${params.run_monovar}" == "true" || "${params.run_sccaller}" == "true" || "${params.run_bam_qc}" == "true" ]]; then
+      test -s "${cell_metadata}" || { echo "ERROR: cell_metadata not found: ${cell_metadata}" >&2; exit 1; }
+      awk -F '\t' -v patient_id="${patient_id}" '
+        NR == 1 { next }
+        NF < 4 || \$1 == "" || \$2 == "" || \$3 == "" || \$4 == "" { print "ERROR: invalid cell_metadata row " NR > "/dev/stderr"; exit 1 }
+        \$1 != patient_id { print "ERROR: cell_metadata patient_id mismatch on row " NR ": " \$1 > "/dev/stderr"; exit 1 }
+        { count++ }
+        END { if (count < 1) { print "ERROR: no cells found in cell_metadata" > "/dev/stderr"; exit 1 } }
+      ' "${cell_metadata}"
+    fi
 
     case "${germline_mode}" in
       precomputed_vcf)
@@ -256,9 +525,12 @@ process CHECK_INPUTS {
         test -s "${germline_vcf}" || { echo "ERROR: germline_vcf not found for combined mode: ${germline_vcf}" >&2; exit 1; }
         test -s "${leukocyte_bam}" || test -s "${leukocyte_vcf}" || { echo "ERROR: combined mode requires leukocyte_bam or leukocyte_vcf" >&2; exit 1; }
         ;;
+      no_germline)
+        echo "No germline/background exclusion configured; MonoVar split-only or external comparison-only mode." >> "\$report"
+        ;;
       *)
         echo "ERROR: unsupported germline_mode '${germline_mode}'" >&2
-        echo "Allowed: precomputed_vcf, deepvariant_bulk_bam, leukocyte_vcf, joint_monovar_leukocyte, combined" >&2
+        echo "Allowed: precomputed_vcf, deepvariant_bulk_bam, leukocyte_vcf, joint_monovar_leukocyte, combined, no_germline" >&2
         exit 1
         ;;
     esac
@@ -266,6 +538,14 @@ process CHECK_INPUTS {
     if [[ "${params.run_monovar}" == "true" ]]; then
       test -n "${params.monovar_script}" || { echo "ERROR: --monovar_script is required when --run_monovar true" >&2; exit 1; }
       test -s "${params.monovar_script}" || { echo "ERROR: monovar_script not found: ${params.monovar_script}" >&2; exit 1; }
+    fi
+
+    if [[ "${params.run_sccaller}" == "true" ]]; then
+      test -n "${params.sccaller_script}" || { echo "ERROR: --sccaller_script is required when --run_sccaller true" >&2; exit 1; }
+      test -s "${params.sccaller_script}" || { echo "ERROR: sccaller_script not found: ${params.sccaller_script}" >&2; exit 1; }
+      test -n "${params.sccaller_hsnp_vcf}" || { echo "ERROR: --sccaller_hsnp_vcf is required when --run_sccaller true" >&2; exit 1; }
+      test -s "${params.sccaller_hsnp_vcf}" || { echo "ERROR: sccaller_hsnp_vcf not found: ${params.sccaller_hsnp_vcf}" >&2; exit 1; }
+      test -s "${bulk_bam}" || { echo "ERROR: bulk_bam is required when --run_sccaller true" >&2; exit 1; }
     fi
 
     echo "status\tOK" >> "\$report"

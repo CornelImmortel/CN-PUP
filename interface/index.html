@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CN-PUP Input Builder</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <h1>CN-PUP Input Builder</h1>
+          <p>Build patient sheets, caller manifests, cell metadata, BAM lists, and launch commands.</p>
+        </div>
+        <div class="status" id="status">Ready</div>
+      </header>
+
+      <section class="panel">
+        <h2>Run Mode</h2>
+        <div class="mode-grid" role="radiogroup" aria-label="Run mode">
+          <label><input type="radio" name="mode" value="monovar" checked> MonoVar only</label>
+          <label><input type="radio" name="mode" value="compare"> Compare existing callers</label>
+          <label><input type="radio" name="mode" value="sccaller"> SCcaller from BAMs</label>
+          <label><input type="radio" name="mode" value="full"> MonoVar + SCcaller + external callers</label>
+        </div>
+      </section>
+
+      <section class="grid">
+        <form class="panel" id="mainForm">
+          <h2>Patient</h2>
+          <div class="fields">
+            <label>Patient ID <input id="patientId" value="Patient_03"></label>
+            <label>Reference FASTA <input id="refFasta" placeholder="/path/to/Homo_sapiens_assembly38.fasta"></label>
+            <label>Output directory <input id="outdir" value="results"></label>
+            <label>Cell metadata filename <input id="cellMetadataName" value="configs/Patient_03_cells.tsv"></label>
+            <label>MonoVar BAM list filename <input id="bamListName" value="configs/Patient_03_monovar_bams.txt"></label>
+            <label>Germline mode
+              <select id="germlineMode">
+                <option value="precomputed_vcf">precomputed_vcf</option>
+                <option value="joint_monovar_leukocyte">joint_monovar_leukocyte</option>
+                <option value="leukocyte_vcf">leukocyte_vcf</option>
+                <option value="deepvariant_bulk_bam">deepvariant_bulk_bam</option>
+                <option value="combined">combined</option>
+              </select>
+            </label>
+            <label>Germline / bulk exclusion VCF <input id="germlineVcf" placeholder="/path/to/bulk_or_germline.vcf.gz"></label>
+            <label>Bulk BAM <input id="bulkBam" placeholder="/path/to/bulk.bam"></label>
+            <label>Leukocyte BAM <input id="leukocyteBam" value="NA"></label>
+            <label>Leukocyte VCF <input id="leukocyteVcf" value="NA"></label>
+            <label>MonoVar script <input id="monovarScript" placeholder="/path/to/monovar.py"></label>
+            <label>SCcaller script <input id="sccallerScript" placeholder="/path/to/sccaller_v2.0.0.py"></label>
+            <label>SCcaller hSNP VCF <input id="sccallerHsnp" placeholder="/path/to/bulk.hsnp.biallelic.dbsnp.vcf"></label>
+          </div>
+        </form>
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>Cells</h2>
+            <button type="button" id="addCell">Add Cell</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cell ID</th>
+                  <th>BAM path</th>
+                  <th>Cell type</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="cellsBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel" id="callerPanel">
+        <div class="section-head">
+          <h2>External Caller VCFs</h2>
+          <button type="button" id="addCaller">Add Caller VCF</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cell ID</th>
+                <th>Caller</th>
+                <th>VCF path</th>
+                <th>SCcaller mode</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="callersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel outputs">
+        <div class="section-head">
+          <h2>Generated Outputs</h2>
+          <div class="actions">
+            <button type="button" id="copyCommand">Copy Command</button>
+            <button type="button" id="downloadAll">Download TSVs</button>
+          </div>
+        </div>
+        <div class="tabs">
+          <button type="button" data-tab="patients" class="active">patients.tsv</button>
+          <button type="button" data-tab="cells">cells.tsv</button>
+          <button type="button" data-tab="bamlist">bam list</button>
+          <button type="button" data-tab="callers">caller_vcfs.tsv</button>
+          <button type="button" data-tab="command">command</button>
+          <button type="button" data-tab="warnings">checks</button>
+        </div>
+        <pre id="outputBox" aria-live="polite"></pre>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

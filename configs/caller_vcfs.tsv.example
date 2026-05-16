@@ -1,0 +1,7 @@
+patient_id	cell_id	caller	vcf_path	sccaller_mode
+Patient_03	SRR8617653	haplotypecaller	/path/to/SRR8617653.haplotypecaller.vcf.gz	
+Patient_03	SRR8617653	deepvariant	/path/to/SRR8617653.deepvariant.vcf.gz	
+Patient_03	SRR8617653	sccaller	/path/to/SRR8617653.sccaller.vcf	external_bulk
+# caller must be one of: monovar, sccaller, haplotypecaller, deepvariant.
+# sccaller_mode is used only for SCcaller rows.
+# Allowed SCcaller modes: so_true, external_bulk, so_true_and_external_bulk, no_bulk.
