@@ -42,6 +42,23 @@ Expected output:
 results/validation/<patient_id>.input_check.txt
 ```
 
+## Weblog Dashboard
+
+If you run a local Nextflow weblog receiver, enable workflow status messages
+with:
+
+```bash
+--enable_weblog true --weblog_url http://localhost:8605
+```
+
+The default is disabled so the pipeline still runs on systems without a weblog
+server. If your Nextflow installation does not auto-load `nf-weblog`, add the
+plugin at runtime:
+
+```bash
+-plugins nf-weblog
+```
+
 ## Main operating modes
 
 CN-PUP can now be used in three increasingly broad modes.
