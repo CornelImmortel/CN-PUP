@@ -47,6 +47,7 @@ params.delsieve_existing_long_table = params.delsieve_existing_long_table ?: ""
 params.delsieve_applauncher = params.delsieve_applauncher ?: "applauncher"
 params.delsieve_beast = params.delsieve_beast ?: "beast"
 params.delsieve_treeannotator = params.delsieve_treeannotator ?: "applauncher"
+params.delsieve_version_file = params.delsieve_version_file ?: ""
 params.delsieve_template_stage1 = params.delsieve_template_stage1 ?: ""
 params.delsieve_threads = params.delsieve_threads ?: 4
 params.delsieve_datatype = params.delsieve_datatype ?: 1
@@ -711,6 +712,7 @@ process DELSIEVE_DATA_COLLECTOR {
     script:
     def sample_args = (params.delsieve_sample_cells.toInteger() > 0 && params.delsieve_sample_loci.toInteger() > 0) ? "-sample ${params.delsieve_sample_cells} ${params.delsieve_sample_loci}" : ""
     def ignore_sex_arg = params.delsieve_ignore_sex ? "-ignoreSex" : ""
+    def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
     """
     set -euo pipefail
 
@@ -732,7 +734,8 @@ process DELSIEVE_DATA_COLLECTOR {
       exit 1
     fi
 
-    "${params.delsieve_applauncher}" DataCollectorLauncher \\
+    set +e
+    "${params.delsieve_applauncher}" ${version_file_args} DataCollectorLauncher \\
       -cell "${delsieve_prep}/cell_names" \\
       -data "${delsieve_prep}/read_counts.full_support_coverage.tsv" \\
       -datatype "${params.delsieve_datatype}" \\
@@ -743,6 +746,17 @@ process DELSIEVE_DATA_COLLECTOR {
       ${ignore_sex_arg} \\
       ${params.delsieve_datacollector_extra_args} \\
       > "\$PWD/delsieve_stage1/${patient_id}.datacollector.log" 2>&1
+    datacollector_status=\$?
+    set -e
+
+    if [[ "\$datacollector_status" -ne 0 ]]; then
+      echo "DataCollectorLauncher exited with status \$datacollector_status" >&2
+      echo "DataCollector log:" >&2
+      cat "\$PWD/delsieve_stage1/${patient_id}.datacollector.log" >&2
+      echo "Files produced under delsieve_stage1:" >&2
+      find "\$PWD/delsieve_stage1" -maxdepth 2 -type f -print >&2
+      exit "\$datacollector_status"
+    fi
 
     if [[ ! -s "\$PWD/delsieve_stage1/${patient_id}.stage1.xml" ]]; then
       echo "DataCollectorLauncher finished but did not create delsieve_stage1/${patient_id}.stage1.xml" >&2
@@ -799,6 +813,7 @@ process DELSIEVE_TREE_ANNOTATOR {
     tuple val(patient_id), path("delsieve_stage1_tree")
 
     script:
+    def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
     """
     set -euo pipefail
 
@@ -813,7 +828,7 @@ process DELSIEVE_TREE_ANNOTATOR {
       exit 1
     fi
 
-    "${params.delsieve_treeannotator}" TreeAnnotatorLauncher \\
+    "${params.delsieve_treeannotator}" ${version_file_args} TreeAnnotatorLauncher \\
       -burnin "${params.delsieve_tree_burnin}" \\
       -heights "${params.delsieve_tree_heights}" \\
       "\$tree_file" \\

@@ -18,6 +18,7 @@ delsieve_min_mapping_quality: 0
 delsieve_applauncher: applauncher
 delsieve_beast: beast
 delsieve_treeannotator: applauncher
+delsieve_version_file: /tzu-share-2/users/students/cornelusp/DelSIEVE/version.xml
 delsieve_template_stage1: /tzu-share-2/users/students/cornelusp/DelSIEVE/examples/templates/smc_mu_sa_stage_1.xml
 delsieve_threads: 8
 delsieve_datatype: 1
