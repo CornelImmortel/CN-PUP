@@ -39,14 +39,13 @@ prepare_vcf_header() {
   local fixed="${PROJECT_DIR}/processed_calls/${caller}/${sample_id}.${caller}.with_contigs.vcf"
 
   bcftools view -h "$raw_vcf" > "$header"
-  if grep -q '^##contig=' "$header"; then
-    printf '%s\n' "$raw_vcf"
-    return
-  fi
-
   if [[ ! -s "${REF_FASTA}.fai" ]]; then
     samtools faidx "$REF_FASTA"
   fi
+
+  # Always rewrite contig header lines from the analysis reference. Some callers
+  # emit contigs without chr-prefix while records use chr-prefixed chromosomes,
+  # which still breaks bcftools even when generic contig lines are present.
   bcftools reheader -f "${REF_FASTA}.fai" -o "$fixed" "$raw_vcf"
   printf '%s\n' "$fixed"
 }
