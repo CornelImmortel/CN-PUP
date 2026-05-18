@@ -18,6 +18,8 @@ params.run_sccaller = params.run_sccaller ?: false
 params.run_external_callers = params.run_external_callers ?: false
 params.run_comparison = params.run_comparison ?: false
 params.run_delsieve_prep = params.run_delsieve_prep ?: false
+params.run_delsieve = params.run_delsieve ?: false
+params.run_delsieve_tree_annotator = params.run_delsieve_tree_annotator == null ? true : params.run_delsieve_tree_annotator
 params.caller_vcfs = params.caller_vcfs ?: "configs/caller_vcfs.tsv"
 params.sccaller_script = params.sccaller_script ?: ""
 params.sccaller_cpu = params.sccaller_cpu ?: 8
@@ -40,6 +42,20 @@ params.delsieve_min_ctc_support = params.delsieve_min_ctc_support ?: 2
 params.delsieve_callers = params.delsieve_callers ?: "all"
 params.delsieve_min_base_quality = params.delsieve_min_base_quality ?: 0
 params.delsieve_min_mapping_quality = params.delsieve_min_mapping_quality ?: 0
+params.delsieve_applauncher = params.delsieve_applauncher ?: "applauncher"
+params.delsieve_beast = params.delsieve_beast ?: "beast"
+params.delsieve_treeannotator = params.delsieve_treeannotator ?: "applauncher"
+params.delsieve_template_stage1 = params.delsieve_template_stage1 ?: ""
+params.delsieve_threads = params.delsieve_threads ?: 4
+params.delsieve_datatype = params.delsieve_datatype ?: 1
+params.delsieve_missing_threshold = params.delsieve_missing_threshold ?: 1
+params.delsieve_sample_cells = params.delsieve_sample_cells ?: 0
+params.delsieve_sample_loci = params.delsieve_sample_loci ?: 0
+params.delsieve_ignore_sex = params.delsieve_ignore_sex ?: false
+params.delsieve_beast_extra_args = params.delsieve_beast_extra_args ?: ""
+params.delsieve_datacollector_extra_args = params.delsieve_datacollector_extra_args ?: ""
+params.delsieve_tree_burnin = params.delsieve_tree_burnin ?: 10
+params.delsieve_tree_heights = params.delsieve_tree_heights ?: "median"
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -269,12 +285,25 @@ workflow {
         BUILD_CALLER_COMPARISON(comparison_by_patient_ch)
         BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
 
-        if (params.run_delsieve_prep) {
+        if (params.run_delsieve_prep || params.run_delsieve) {
             delsieve_patient_info_ch = checked_info_ch.map { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
                 tuple(patient_id, ref_fasta, cell_metadata)
             }
             PREPARE_DELSIEVE_INPUTS(BUILD_CALLER_COMPARISON.out.join(delsieve_patient_info_ch, by: 0))
             PREPARE_DELSIEVE_INPUTS.out.view { "DelSIEVE prep inputs: ${it[1]}" }
+
+            if (params.run_delsieve) {
+                DELSIEVE_DATA_COLLECTOR(PREPARE_DELSIEVE_INPUTS.out)
+                DELSIEVE_DATA_COLLECTOR.out.view { "DelSIEVE stage 1 XML: ${it[2]}" }
+
+                RUN_DELSIEVE_STAGE1(DELSIEVE_DATA_COLLECTOR.out)
+                RUN_DELSIEVE_STAGE1.out.view { "DelSIEVE stage 1 run: ${it[1]}" }
+
+                if (params.run_delsieve_tree_annotator) {
+                    DELSIEVE_TREE_ANNOTATOR(RUN_DELSIEVE_STAGE1.out)
+                    DELSIEVE_TREE_ANNOTATOR.out.view { "DelSIEVE annotated tree: ${it[1]}" }
+                }
+            }
         }
     }
 }
@@ -642,6 +671,117 @@ process PREPARE_DELSIEVE_INPUTS {
       printf "chrom\tpos\tref\tcandidate_alt\tvar_id\\n" > "\$PWD/delsieve_prep/read_counts.full_support_coverage.tsv"
       printf "var_id\tchrom\tpos\tref\tcandidate_alt\tcell_id\tA\tC\tG\tT\talt1\talt2\talt3\tref_count\tcoverage\\n" > "\$PWD/delsieve_prep/read_counts.human_readable.tsv"
     fi
+    """
+}
+
+process DELSIEVE_DATA_COLLECTOR {
+    tag "$patient_id"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1" }, mode: 'copy', pattern: "delsieve_stage1/*"
+
+    input:
+    tuple val(patient_id), path(delsieve_prep)
+
+    output:
+    tuple val(patient_id), path(delsieve_prep), path("delsieve_stage1/${patient_id}.stage1.xml"), path("delsieve_stage1/${patient_id}.datacollector.log")
+
+    script:
+    def sample_args = (params.delsieve_sample_cells.toInteger() > 0 && params.delsieve_sample_loci.toInteger() > 0) ? "-sample ${params.delsieve_sample_cells} ${params.delsieve_sample_loci}" : ""
+    def ignore_sex_arg = params.delsieve_ignore_sex ? "-ignoreSex" : ""
+    """
+    set -euo pipefail
+
+    mkdir -p delsieve_stage1
+
+    if [[ -z "${params.delsieve_template_stage1}" ]]; then
+      echo "delsieve_template_stage1 is required when run_delsieve is true" >&2
+      exit 1
+    fi
+    if [[ ! -s "${params.delsieve_template_stage1}" ]]; then
+      echo "DelSIEVE stage 1 template not found: ${params.delsieve_template_stage1}" >&2
+      exit 1
+    fi
+    if [[ \$(wc -l < "${delsieve_prep}/read_counts.full_support_coverage.tsv") -le 1 ]]; then
+      echo "No DelSIEVE candidate sites were found. Check ${delsieve_prep}/candidate_summary.tsv." >&2
+      exit 1
+    fi
+
+    "${params.delsieve_applauncher}" DataCollectorLauncher \\
+      -cell "${delsieve_prep}/cell_names" \\
+      -data "${delsieve_prep}/read_counts.full_support_coverage.tsv" \\
+      -datatype "${params.delsieve_datatype}" \\
+      -template "${params.delsieve_template_stage1}" \\
+      -out "\$PWD/delsieve_stage1/${patient_id}.stage1.xml" \\
+      -miss "${params.delsieve_missing_threshold}" \\
+      ${sample_args} \\
+      ${ignore_sex_arg} \\
+      ${params.delsieve_datacollector_extra_args} \\
+      > "\$PWD/delsieve_stage1/${patient_id}.datacollector.log" 2>&1
+    """
+}
+
+process RUN_DELSIEVE_STAGE1 {
+    tag "$patient_id"
+    cpus params.delsieve_threads
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_run" }, mode: 'copy', pattern: "delsieve_stage1_run/*"
+
+    input:
+    tuple val(patient_id), path(delsieve_prep), path(stage1_xml), path(datacollector_log)
+
+    output:
+    tuple val(patient_id), path("delsieve_stage1_run"), path(stage1_xml), path(delsieve_prep)
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p delsieve_stage1_run
+
+    "${params.delsieve_beast}" \\
+      -overwrite \\
+      -threads "${params.delsieve_threads}" \\
+      -prefix "\$PWD/delsieve_stage1_run/" \\
+      ${params.delsieve_beast_extra_args} \\
+      "${stage1_xml}" \\
+      > "\$PWD/delsieve_stage1_run/${patient_id}.beast.log" 2>&1
+
+    cp "${stage1_xml}" "\$PWD/delsieve_stage1_run/${patient_id}.stage1.xml"
+    cp "${datacollector_log}" "\$PWD/delsieve_stage1_run/${patient_id}.datacollector.log"
+    """
+}
+
+process DELSIEVE_TREE_ANNOTATOR {
+    tag "$patient_id"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_tree" }, mode: 'copy', pattern: "delsieve_stage1_tree/*"
+
+    input:
+    tuple val(patient_id), path(stage1_run), path(stage1_xml), path(delsieve_prep)
+
+    output:
+    tuple val(patient_id), path("delsieve_stage1_tree")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p delsieve_stage1_tree
+
+    tree_file=\$(find "${stage1_run}" -maxdepth 1 -type f \\( -name "*.trees" -o -name "*.tree" \\) | head -n 1)
+    if [[ -z "\$tree_file" ]]; then
+      echo "No BEAST tree file found in ${stage1_run}" >&2
+      exit 1
+    fi
+
+    "${params.delsieve_treeannotator}" TreeAnnotatorLauncher \\
+      -burnin "${params.delsieve_tree_burnin}" \\
+      -heights "${params.delsieve_tree_heights}" \\
+      "\$tree_file" \\
+      "\$PWD/delsieve_stage1_tree/${patient_id}.stage1.mcc.tree" \\
+      > "\$PWD/delsieve_stage1_tree/${patient_id}.treeannotator.log" 2>&1
+
+    cp "\$tree_file" "\$PWD/delsieve_stage1_tree/\$(basename "\$tree_file")"
+    cp "${stage1_xml}" "\$PWD/delsieve_stage1_tree/${patient_id}.stage1.xml"
+    cp "${delsieve_prep}/candidate_sites.tsv" "\$PWD/delsieve_stage1_tree/candidate_sites.tsv"
+    cp "${delsieve_prep}/cell_names.tsv" "\$PWD/delsieve_stage1_tree/cell_names.tsv"
     """
 }
 

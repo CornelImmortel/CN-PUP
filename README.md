@@ -189,6 +189,44 @@ results/<patient_id>/comparable_calls/<caller>/<cell_id>.<caller>.comparable.vcf
 Those comparable VCFs are then converted into long tables, mutation matrices,
 CTC-SCITE inputs, and overlap QC reports.
 
+### Optional DelSIEVE integration
+
+CN-PUP can also prepare and launch a first DelSIEVE stage from the caller
+comparison outputs. This mode uses germline-subtracted, filtered variants as
+candidate sites, keeps sites supported by at least `delsieve_min_ctc_support`
+CTCs, piles up the original CTC BAMs at those sites, generates a DelSIEVE/BEAST
+XML with `DataCollectorLauncher`, and runs BEAST.
+
+The required external tools are DelSIEVE installed into BEAST 2 and executable
+paths for:
+
+- `delsieve_applauncher`, usually `applauncher`
+- `delsieve_beast`, usually `beast`
+- `delsieve_template_stage1`, for example a DelSIEVE stage 1 XML template from
+  the DelSIEVE repository
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml \
+  --run_delsieve true \
+  --delsieve_applauncher /path/to/beast/bin/applauncher \
+  --delsieve_beast /path/to/beast/bin/beast \
+  --delsieve_template_stage1 /path/to/DelSIEVE/examples/templates/smc_mu_sa_stage_1.xml \
+  -resume
+```
+
+Outputs are written under:
+
+```text
+results/<patient_id>/delsieve_prep/
+results/<patient_id>/delsieve_stage1/
+results/<patient_id>/delsieve_stage1_run/
+results/<patient_id>/delsieve_stage1_tree/
+```
+
 SCcaller supports the same comparison modes as `mutation_matrix_pipeline`:
 
 - `so_true`: require SCcaller internal `SO=True`.
