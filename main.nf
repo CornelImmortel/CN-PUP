@@ -17,6 +17,7 @@ params.run_monovar = params.run_monovar ?: false
 params.run_sccaller = params.run_sccaller ?: false
 params.run_external_callers = params.run_external_callers ?: false
 params.run_comparison = params.run_comparison ?: false
+params.run_delsieve_prep = params.run_delsieve_prep ?: false
 params.caller_vcfs = params.caller_vcfs ?: "configs/caller_vcfs.tsv"
 params.sccaller_script = params.sccaller_script ?: ""
 params.sccaller_cpu = params.sccaller_cpu ?: 8
@@ -35,6 +36,10 @@ params.vep_fasta = params.vep_fasta ?: ""
 params.vep_forks = params.vep_forks ?: 2
 params.vep_buffer_size = params.vep_buffer_size ?: 5000
 params.vep_sites_per_chunk = params.vep_sites_per_chunk ?: 5000
+params.delsieve_min_ctc_support = params.delsieve_min_ctc_support ?: 2
+params.delsieve_callers = params.delsieve_callers ?: "all"
+params.delsieve_min_base_quality = params.delsieve_min_base_quality ?: 0
+params.delsieve_min_mapping_quality = params.delsieve_min_mapping_quality ?: 0
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -263,6 +268,14 @@ workflow {
             .groupTuple(by: 0)
         BUILD_CALLER_COMPARISON(comparison_by_patient_ch)
         BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
+
+        if (params.run_delsieve_prep) {
+            delsieve_patient_info_ch = checked_info_ch.map { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
+                tuple(patient_id, ref_fasta, cell_metadata)
+            }
+            PREPARE_DELSIEVE_INPUTS(BUILD_CALLER_COMPARISON.out.join(delsieve_patient_info_ch, by: 0))
+            PREPARE_DELSIEVE_INPUTS.out.view { "DelSIEVE prep inputs: ${it[1]}" }
+        }
     }
 }
 
@@ -581,6 +594,54 @@ process BUILD_CALLER_COMPARISON {
     python "${projectDir}/bin/mutation_matrix/06_overlap_qc.py" \\
       --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
       --output "\$PWD/reports/overlap_qc.tsv"
+    """
+}
+
+process PREPARE_DELSIEVE_INPUTS {
+    tag "$patient_id"
+    conda "envs/delsieve_prep.yml"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_prep" }, mode: 'copy', pattern: "delsieve_prep/*"
+
+    input:
+    tuple val(patient_id), path(long_table), path(matrices), path(ctc_scite_inputs), path(overlap_qc), val(ref_fasta), val(cell_metadata)
+
+    output:
+    tuple val(patient_id), path("delsieve_prep")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p delsieve_prep
+
+    python "${projectDir}/bin/prepare_delsieve_inputs.py" select-candidates \\
+      --long-table "${long_table}" \\
+      --cell-metadata "${cell_metadata}" \\
+      --output-dir "\$PWD/delsieve_prep" \\
+      --min-ctc-support "${params.delsieve_min_ctc_support}" \\
+      --min-total-depth "${params.min_total_depth}" \\
+      --min-alt-reads "${params.min_alt_reads}" \\
+      --min-vaf "${params.min_vaf}" \\
+      --callers "${params.delsieve_callers}"
+
+    if [[ -s "\$PWD/delsieve_prep/candidate_sites.bed" ]]; then
+      samtools mpileup \\
+        -aa -A -B \\
+        -Q "${params.delsieve_min_base_quality}" \\
+        -q "${params.delsieve_min_mapping_quality}" \\
+        -f "${ref_fasta}" \\
+        -l "\$PWD/delsieve_prep/candidate_sites.bed" \\
+        -b "\$PWD/delsieve_prep/bams.txt" \\
+        > "\$PWD/delsieve_prep/candidate_sites.mpileup"
+
+      python "${projectDir}/bin/prepare_delsieve_inputs.py" parse-mpileup \\
+        --mpileup "\$PWD/delsieve_prep/candidate_sites.mpileup" \\
+        --output-dir "\$PWD/delsieve_prep"
+    else
+      touch "\$PWD/delsieve_prep/candidate_sites.mpileup"
+      printf "chrom\tpos\tref\tcandidate_alt\tvar_id\\n" > "\$PWD/delsieve_prep/read_counts.full_support_coverage.tsv"
+      printf "var_id\tchrom\tpos\tref\tcandidate_alt\tcell_id\tA\tC\tG\tT\talt1\talt2\talt3\tref_count\tcoverage\\n" > "\$PWD/delsieve_prep/read_counts.human_readable.tsv"
+    fi
     """
 }
 

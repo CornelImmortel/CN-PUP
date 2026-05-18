@@ -4,12 +4,17 @@ outdir: results
 run_monovar: false
 run_external_callers: true
 run_comparison: true
+run_delsieve_prep: true
 run_vep_filter: true
 run_snv_report: true
 tissue_vcfs: configs/tissue_vcfs.patient_03_wxs_meta_leuko.tsv
 min_total_depth: 20
 min_alt_reads: 4
 min_vaf: 0.0
+delsieve_min_ctc_support: 2
+delsieve_callers: all
+delsieve_min_base_quality: 0
+delsieve_min_mapping_quality: 0
 max_population_af: 0.001
 keep_cosmic: true
 genome: GRCh38
