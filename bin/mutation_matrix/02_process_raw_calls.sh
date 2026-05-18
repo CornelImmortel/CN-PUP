@@ -33,15 +33,35 @@ sccaller_somatic_mode="${SCCALLER_SOMATIC_MODE:-so_true}"
 
 filter_expr_common="(FILTER=\"PASS\" || FILTER=\".\") && GT!=\"0/0\" && GT!=\"0|0\" && GT!=\"./.\" && GT!=\".|.\" && FORMAT/DP>=${min_dp} && FORMAT/AD[0:1]>=${min_alt}"
 
+prepare_vcf_header() {
+  local sample_id="$1" caller="$2" raw_vcf="$3"
+  local header="${PROJECT_DIR}/logs/${sample_id}.${caller}.raw_header.txt"
+  local fixed="${PROJECT_DIR}/processed_calls/${caller}/${sample_id}.${caller}.with_contigs.vcf"
+
+  bcftools view -h "$raw_vcf" > "$header"
+  if grep -q '^##contig=' "$header"; then
+    printf '%s\n' "$raw_vcf"
+    return
+  fi
+
+  if [[ ! -s "${REF_FASTA}.fai" ]]; then
+    samtools faidx "$REF_FASTA"
+  fi
+  bcftools reheader -f "${REF_FASTA}.fai" -o "$fixed" "$raw_vcf"
+  printf '%s\n' "$fixed"
+}
+
 process_common() {
   local sample_id="$1" caller="$2" raw_vcf="$3"
   mkdir -p "${PROJECT_DIR}/processed_calls/${caller}" "${PROJECT_DIR}/normalized_calls/${caller}" "${PROJECT_DIR}/comparable_calls/${caller}"
+  local input_vcf
+  input_vcf="$(prepare_vcf_header "$sample_id" "$caller" "$raw_vcf")"
   local filtered="${PROJECT_DIR}/processed_calls/${caller}/${sample_id}.${caller}.filtered.snvs.vcf.gz"
   local norm="${PROJECT_DIR}/normalized_calls/${caller}/${sample_id}.${caller}.filtered.snvs.norm.vcf.gz"
   local comp="${PROJECT_DIR}/comparable_calls/${caller}/${sample_id}.${caller}.comparable.vcf.gz"
   local norm_log="${PROJECT_DIR}/logs/${sample_id}.${caller}.norm.log"
 
-  bcftools view -v snps -i "$filter_expr_common" "$raw_vcf" -Oz -o "$filtered"
+  bcftools view -v snps -i "$filter_expr_common" "$input_vcf" -Oz -o "$filtered"
   tabix -f -p vcf "$filtered"
   bcftools norm -f "$REF_FASTA" -m -any "$filtered" -Oz -o "$norm" 2> "$norm_log"
   tabix -f -p vcf "$norm"
@@ -61,9 +81,9 @@ process_common() {
     local summary="${vep_dir}/${sample_id}.${caller}.population_cosmic.summary.tsv"
     local filter_log="${PROJECT_DIR}/logs/${sample_id}.${caller}.existing_vep_filter.log"
     mkdir -p "$vep_dir"
-    if bcftools view -h "$raw_vcf" | grep -q '##INFO=<ID=CSQ'; then
+    if bcftools view -h "$input_vcf" > "${PROJECT_DIR}/logs/${sample_id}.${caller}.prepared_header.txt" && grep -q '##INFO=<ID=CSQ' "${PROJECT_DIR}/logs/${sample_id}.${caller}.prepared_header.txt"; then
       python "$PROJECT_CODE_DIR/bin/extract_existing_vep_from_vcf.py" \
-        --vcf "$raw_vcf" \
+        --vcf "$input_vcf" \
         --output "$vep_tsv" \
         > "$filter_log" 2>&1
     else
