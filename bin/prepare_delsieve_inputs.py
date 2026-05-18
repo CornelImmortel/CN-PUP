@@ -175,15 +175,17 @@ def parse_mpileup(args):
 
     with open(args.mpileup, "r", encoding="utf-8") as pile, \
             open(outdir / "read_counts.full_support_coverage.tsv", "w", encoding="utf-8", newline="") as counts_out, \
+            open(outdir / "read_counts.full_support_coverage.with_metadata.tsv", "w", encoding="utf-8", newline="") as metadata_counts_out, \
             open(outdir / "read_counts.human_readable.tsv", "w", encoding="utf-8", newline="") as readable_out:
         counts_writer = csv.writer(counts_out, delimiter="\t")
+        metadata_counts_writer = csv.writer(metadata_counts_out, delimiter="\t")
         readable_cols = ["var_id", "chrom", "pos", "ref", "candidate_alt", "cell_id", "A", "C", "G", "T", "alt1", "alt2", "alt3", "ref_count", "coverage"]
         readable_writer = csv.DictWriter(readable_out, fieldnames=readable_cols, delimiter="\t")
         readable_writer.writeheader()
         header = ["chrom", "pos", "ref", "candidate_alt", "var_id"]
         for cell in cells:
             header.extend([f"{cell}.alt1", f"{cell}.alt2", f"{cell}.alt3", f"{cell}.ref", f"{cell}.coverage"])
-        counts_writer.writerow(header)
+        metadata_counts_writer.writerow(header)
 
         for line in pile:
             if not line.strip():
@@ -191,7 +193,8 @@ def parse_mpileup(args):
             fields = line.rstrip("\n").split("\t")
             chrom, pos, ref = fields[0], fields[1], fields[2].upper()
             site = site_by_key.get((chrom, pos), {})
-            row = [chrom, pos, ref, site.get("alt", ""), site.get("var_id", f"{chrom}:{pos}")]
+            counts_row = []
+            metadata_row = [chrom, pos, ref, site.get("alt", ""), site.get("var_id", f"{chrom}:{pos}")]
             sample_fields = fields[3:]
             for idx, cell in enumerate(cells):
                 base_idx = idx * 3
@@ -203,7 +206,9 @@ def parse_mpileup(args):
                 base_counts = parse_bases(ref, bases)
                 alt_counts = sorted([base_counts[b] for b in "ACGT" if b != ref], reverse=True)
                 ref_count = base_counts[ref]
-                row.extend([alt_counts[0], alt_counts[1], alt_counts[2], ref_count, depth])
+                count_block = [alt_counts[0], alt_counts[1], alt_counts[2], ref_count, depth]
+                counts_row.extend(count_block)
+                metadata_row.extend(count_block)
                 readable_writer.writerow({
                     "var_id": site.get("var_id", f"{chrom}:{pos}"),
                     "chrom": chrom,
@@ -221,7 +226,8 @@ def parse_mpileup(args):
                     "ref_count": ref_count,
                     "coverage": depth,
                 })
-            counts_writer.writerow(row)
+            counts_writer.writerow(counts_row)
+            metadata_counts_writer.writerow(metadata_row)
 
 
 def main():

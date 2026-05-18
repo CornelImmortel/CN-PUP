@@ -724,7 +724,7 @@ process DELSIEVE_DATA_COLLECTOR {
       echo "DelSIEVE stage 1 template not found: ${params.delsieve_template_stage1}" >&2
       exit 1
     fi
-    if [[ \$(wc -l < "${delsieve_prep}/read_counts.full_support_coverage.tsv") -le 1 ]]; then
+    if [[ \$(wc -l < "${delsieve_prep}/read_counts.full_support_coverage.tsv") -eq 0 ]]; then
       echo "No DelSIEVE candidate sites were found. Check ${delsieve_prep}/candidate_summary.tsv." >&2
       exit 1
     fi
@@ -740,6 +740,15 @@ process DELSIEVE_DATA_COLLECTOR {
       ${ignore_sex_arg} \\
       ${params.delsieve_datacollector_extra_args} \\
       > "\$PWD/delsieve_stage1/${patient_id}.datacollector.log" 2>&1
+
+    if [[ ! -s "\$PWD/delsieve_stage1/${patient_id}.stage1.xml" ]]; then
+      echo "DataCollectorLauncher finished but did not create delsieve_stage1/${patient_id}.stage1.xml" >&2
+      echo "DataCollector log:" >&2
+      cat "\$PWD/delsieve_stage1/${patient_id}.datacollector.log" >&2
+      echo "Files produced under delsieve_stage1:" >&2
+      find "\$PWD/delsieve_stage1" -maxdepth 2 -type f -print >&2
+      exit 1
+    fi
     """
 }
 
