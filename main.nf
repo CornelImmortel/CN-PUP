@@ -332,7 +332,14 @@ EOF
       cp "\${exclusion_inputs[0]}" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
       cp "\${exclusion_inputs[0]}.tbi" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz.tbi"
     elif (( \${#exclusion_inputs[@]} > 1 )); then
-      bcftools concat -a "\${exclusion_inputs[@]}" -Ou \\
+      site_only_inputs=()
+      for exclusion_vcf in "\${exclusion_inputs[@]}"; do
+        site_only="\${exclusion_vcf%.vcf.gz}.sites_only.vcf.gz"
+        bcftools view -G "\$exclusion_vcf" -Oz -o "\$site_only"
+        tabix -f -p vcf "\$site_only"
+        site_only_inputs+=("\$site_only")
+      done
+      bcftools concat -a "\${site_only_inputs[@]}" -Ou \\
       | bcftools sort -Ou \\
       | bcftools norm -d exact -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
@@ -482,7 +489,14 @@ EOF
       cp "\${exclusion_inputs[0]}" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
       cp "\${exclusion_inputs[0]}.tbi" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz.tbi"
     elif (( \${#exclusion_inputs[@]} > 1 )); then
-      bcftools concat -a "\${exclusion_inputs[@]}" -Ou \\
+      site_only_inputs=()
+      for exclusion_vcf in "\${exclusion_inputs[@]}"; do
+        site_only="\${exclusion_vcf%.vcf.gz}.sites_only.vcf.gz"
+        bcftools view -G "\$exclusion_vcf" -Oz -o "\$site_only"
+        tabix -f -p vcf "\$site_only"
+        site_only_inputs+=("\$site_only")
+      done
+      bcftools concat -a "\${site_only_inputs[@]}" -Ou \\
       | bcftools sort -Ou \\
       | bcftools norm -d exact -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
