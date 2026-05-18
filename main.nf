@@ -268,7 +268,7 @@ workflow {
 
 process STANDARDIZE_EXTERNAL_CALLERS {
     tag "$patient_id"
-    conda "envs/bcftools.yml"
+    conda { params.run_vep_filter ? "envs/vep.yml" : "envs/bcftools.yml" }
     publishDir { "${params.outdir}/${patient_id}/processed_calls" }, mode: 'copy', pattern: "comparison_project/processed_calls/**"
     publishDir { "${params.outdir}/${patient_id}/normalized_calls" }, mode: 'copy', pattern: "comparison_project/normalized_calls/**"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls" }, mode: 'copy', pattern: "comparison_project/comparable_calls/**"
@@ -335,6 +335,13 @@ EOF
     export RUN_EXISTING_VEP_FILTER="${params.run_vep_filter}"
     export MAX_POPULATION_AF="${params.max_population_af}"
     export KEEP_COSMIC="${params.keep_cosmic}"
+    export GENOME="${params.genome}"
+    export VEP_SPECIES="${params.vep_species}"
+    export VEP_CACHE="${params.vep_cache}"
+    export VEP_CACHE_VERSION="${params.vep_cache_version}"
+    export VEP_FASTA="${params.vep_fasta}"
+    export VEP_FORKS="${params.vep_forks}"
+    export VEP_BUFFER_SIZE="${params.vep_buffer_size}"
 
     bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
       "\$PWD/comparison_project" \\
@@ -401,7 +408,7 @@ process RUN_SCCALLER_FROM_BAM {
 
 process STANDARDIZE_INTERNAL_SCCALLER {
     tag "$patient_id"
-    conda "envs/bcftools.yml"
+    conda { params.run_vep_filter ? "envs/vep.yml" : "envs/bcftools.yml" }
     publishDir { "${params.outdir}/${patient_id}/normalized_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/normalized_calls/sccaller/*"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/comparable_calls/sccaller/*"
     publishDir { "${params.outdir}/${patient_id}/vep/external_existing" }, mode: 'copy', pattern: "comparison_project/vep_existing/**"
@@ -466,6 +473,13 @@ EOF
     export RUN_EXISTING_VEP_FILTER="${params.run_vep_filter}"
     export MAX_POPULATION_AF="${params.max_population_af}"
     export KEEP_COSMIC="${params.keep_cosmic}"
+    export GENOME="${params.genome}"
+    export VEP_SPECIES="${params.vep_species}"
+    export VEP_CACHE="${params.vep_cache}"
+    export VEP_CACHE_VERSION="${params.vep_cache_version}"
+    export VEP_FASTA="${params.vep_fasta}"
+    export VEP_FORKS="${params.vep_forks}"
+    export VEP_BUFFER_SIZE="${params.vep_buffer_size}"
 
     bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
       "\$PWD/comparison_project" \\

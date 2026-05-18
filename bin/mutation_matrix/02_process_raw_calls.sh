@@ -22,6 +22,13 @@ min_vaf="${MIN_VAF:-0}"
 run_existing_vep_filter="${RUN_EXISTING_VEP_FILTER:-false}"
 max_population_af="${MAX_POPULATION_AF:-0.001}"
 keep_cosmic="${KEEP_COSMIC:-true}"
+genome="${GENOME:-GRCh38}"
+vep_species="${VEP_SPECIES:-homo_sapiens}"
+vep_cache="${VEP_CACHE:-$HOME/.vep}"
+vep_cache_version="${VEP_CACHE_VERSION:-}"
+vep_fasta="${VEP_FASTA:-}"
+vep_forks="${VEP_FORKS:-2}"
+vep_buffer_size="${VEP_BUFFER_SIZE:-5000}"
 sccaller_somatic_mode="${SCCALLER_SOMATIC_MODE:-so_true}"
 
 filter_expr_common="(FILTER=\"PASS\" || FILTER=\".\") && GT!=\"0/0\" && GT!=\"0|0\" && GT!=\"./.\" && GT!=\".|.\" && FORMAT/DP>=${min_dp} && FORMAT/AD[0:1]>=${min_alt}"
@@ -59,6 +66,55 @@ process_common() {
         --vcf "$raw_vcf" \
         --output "$vep_tsv" \
         > "$filter_log" 2>&1
+    else
+      echo "No CSQ annotation found in $raw_vcf; running VEP on comparable VCF." > "$filter_log"
+      local vep_input="${vep_dir}/${sample_id}.${caller}.vep_input.tsv"
+      bcftools query \
+        -f '%CHROM\t%POS\t%POS\t%REF\t%ALT\n' \
+        "$comp" \
+      | awk 'BEGIN { OFS="\t" } { print $1, $2, $3, $4 "/" $5, "+", $1 ":" $2 "_" $4 "/" $5 }' \
+      | sort -k1,1V -k2,2n > "$vep_input"
+      if [[ ! -s "$vep_input" ]]; then
+        printf 'Uploaded_variation\tLocation\tAllele\tGene\tSYMBOL\tFeature\tConsequence\tIMPACT\tHGVSc\tHGVSp\tExisting_variation\tMAX_AF\tMAX_AF_POPS\tAF\tgnomADe_AF\tgnomADg_AF\n' > "$vep_tsv"
+      else
+        local fasta_args=()
+        local cache_version_args=()
+        if [[ -n "$vep_fasta" ]]; then
+          fasta_args=(--fasta "$vep_fasta")
+        fi
+        if [[ -n "$vep_cache_version" ]]; then
+          cache_version_args=(--cache_version "$vep_cache_version")
+        fi
+        vep \
+          --input_file "$vep_input" \
+          --output_file "$vep_tsv" \
+          --tab \
+          --force_overwrite \
+          --offline \
+          --cache \
+          --assembly "$genome" \
+          --species "$vep_species" \
+          --dir_cache "$vep_cache" \
+          "${cache_version_args[@]}" \
+          "${fasta_args[@]}" \
+          --fork "$vep_forks" \
+          --buffer_size "$vep_buffer_size" \
+          --symbol \
+          --canonical \
+          --numbers \
+          --hgvs \
+          --af \
+          --af_1kg \
+          --af_gnomade \
+          --af_gnomadg \
+          --max_af \
+          --no_stats \
+          --fields Uploaded_variation,Location,Allele,Gene,SYMBOL,Feature,Consequence,IMPACT,HGVSc,HGVSp,Existing_variation,MAX_AF,MAX_AF_POPS,AF,gnomADe_AF,gnomADg_AF \
+          >> "$filter_log" 2>&1
+      fi
+    fi
+
+    if [[ -s "$vep_tsv" ]]; then
       python "$PROJECT_CODE_DIR/bin/filter_vcf_by_vep.py" \
         --vcf "$comp" \
         --vep "$vep_tsv" \
@@ -72,8 +128,6 @@ process_common() {
       tabix -f -p vcf "$final"
       mv -f "$final" "$comp"
       mv -f "${final}.tbi" "${comp}.tbi"
-    else
-      echo "No CSQ annotation found in $raw_vcf; existing-VEP filter skipped." > "$filter_log"
     fi
   fi
   echo "Comparable VCF: $comp"
