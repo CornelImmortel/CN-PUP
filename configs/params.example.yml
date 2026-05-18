@@ -6,12 +6,14 @@ monovar_region: ""
 run_monovar: false
 run_delsieve_prep: false
 run_delsieve: false
+run_delsieve_from_existing: false
 min_total_depth: 20
 min_alt_reads: 4
 min_vaf: 0.0
 delsieve_min_ctc_support: 2
 delsieve_applauncher: applauncher
 delsieve_beast: beast
+delsieve_existing_long_table: ""
 delsieve_template_stage1: ""
 vep_cache: ~/.vep
 genome: GRCh38

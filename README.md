@@ -227,6 +227,19 @@ results/<patient_id>/delsieve_stage1_run/
 results/<patient_id>/delsieve_stage1_tree/
 ```
 
+When caller comparison outputs already exist, DelSIEVE can be launched without
+re-running caller standardization or matrix construction:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_delsieve_existing.yml \
+  -resume
+```
+
+This mode reads `delsieve_existing_long_table` and only runs the DelSIEVE prep
+and DelSIEVE execution stages.
+
 SCcaller supports the same comparison modes as `mutation_matrix_pipeline`:
 
 - `so_true`: require SCcaller internal `SO=True`.

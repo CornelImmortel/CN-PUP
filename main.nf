@@ -19,6 +19,7 @@ params.run_external_callers = params.run_external_callers ?: false
 params.run_comparison = params.run_comparison ?: false
 params.run_delsieve_prep = params.run_delsieve_prep ?: false
 params.run_delsieve = params.run_delsieve ?: false
+params.run_delsieve_from_existing = params.run_delsieve_from_existing ?: false
 params.run_delsieve_tree_annotator = params.run_delsieve_tree_annotator == null ? true : params.run_delsieve_tree_annotator
 params.caller_vcfs = params.caller_vcfs ?: "configs/caller_vcfs.tsv"
 params.sccaller_script = params.sccaller_script ?: ""
@@ -42,6 +43,7 @@ params.delsieve_min_ctc_support = params.delsieve_min_ctc_support ?: 2
 params.delsieve_callers = params.delsieve_callers ?: "all"
 params.delsieve_min_base_quality = params.delsieve_min_base_quality ?: 0
 params.delsieve_min_mapping_quality = params.delsieve_min_mapping_quality ?: 0
+params.delsieve_existing_long_table = params.delsieve_existing_long_table ?: ""
 params.delsieve_applauncher = params.delsieve_applauncher ?: "applauncher"
 params.delsieve_beast = params.delsieve_beast ?: "beast"
 params.delsieve_treeannotator = params.delsieve_treeannotator ?: "applauncher"
@@ -113,6 +115,19 @@ workflow {
     }
 
     comparison_inputs = Channel.empty()
+
+    delsieve_source_ch = Channel.empty()
+
+    if (params.run_delsieve_from_existing) {
+        def existing_long_table = resolveInputPath(params.delsieve_existing_long_table)
+        if (!existing_long_table || existing_long_table == 'NA') {
+            error "delsieve_existing_long_table is required when run_delsieve_from_existing is true"
+        }
+        delsieve_existing_ch = checked_info_ch.map { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
+            tuple(patient_id, file(existing_long_table), ref_fasta, cell_metadata)
+        }
+        delsieve_source_ch = delsieve_source_ch.mix(delsieve_existing_ch)
+    }
 
     if (params.run_external_callers) {
         external_rows_ch = Channel
@@ -289,20 +304,29 @@ workflow {
             delsieve_patient_info_ch = checked_info_ch.map { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
                 tuple(patient_id, ref_fasta, cell_metadata)
             }
-            PREPARE_DELSIEVE_INPUTS(BUILD_CALLER_COMPARISON.out.join(delsieve_patient_info_ch, by: 0))
-            PREPARE_DELSIEVE_INPUTS.out.view { "DelSIEVE prep inputs: ${it[1]}" }
-
-            if (params.run_delsieve) {
-                DELSIEVE_DATA_COLLECTOR(PREPARE_DELSIEVE_INPUTS.out)
-                DELSIEVE_DATA_COLLECTOR.out.view { "DelSIEVE stage 1 XML: ${it[2]}" }
-
-                RUN_DELSIEVE_STAGE1(DELSIEVE_DATA_COLLECTOR.out)
-                RUN_DELSIEVE_STAGE1.out.view { "DelSIEVE stage 1 run: ${it[1]}" }
-
-                if (params.run_delsieve_tree_annotator) {
-                    DELSIEVE_TREE_ANNOTATOR(RUN_DELSIEVE_STAGE1.out)
-                    DELSIEVE_TREE_ANNOTATOR.out.view { "DelSIEVE annotated tree: ${it[1]}" }
+            delsieve_from_comparison_ch = BUILD_CALLER_COMPARISON.out
+                .join(delsieve_patient_info_ch, by: 0)
+                .map { patient_id, long_table, matrices, ctc_scite_inputs, overlap_qc, ref_fasta, cell_metadata ->
+                    tuple(patient_id, long_table, ref_fasta, cell_metadata)
                 }
+            delsieve_source_ch = delsieve_source_ch.mix(delsieve_from_comparison_ch)
+        }
+    }
+
+    if (params.run_delsieve_prep || params.run_delsieve || params.run_delsieve_from_existing) {
+        PREPARE_DELSIEVE_INPUTS(delsieve_source_ch)
+        PREPARE_DELSIEVE_INPUTS.out.view { "DelSIEVE prep inputs: ${it[1]}" }
+
+        if (params.run_delsieve) {
+            DELSIEVE_DATA_COLLECTOR(PREPARE_DELSIEVE_INPUTS.out)
+            DELSIEVE_DATA_COLLECTOR.out.view { "DelSIEVE stage 1 XML: ${it[2]}" }
+
+            RUN_DELSIEVE_STAGE1(DELSIEVE_DATA_COLLECTOR.out)
+            RUN_DELSIEVE_STAGE1.out.view { "DelSIEVE stage 1 run: ${it[1]}" }
+
+            if (params.run_delsieve_tree_annotator) {
+                DELSIEVE_TREE_ANNOTATOR(RUN_DELSIEVE_STAGE1.out)
+                DELSIEVE_TREE_ANNOTATOR.out.view { "DelSIEVE annotated tree: ${it[1]}" }
             }
         }
     }
@@ -632,7 +656,7 @@ process PREPARE_DELSIEVE_INPUTS {
     publishDir { "${params.outdir}/${patient_id}/delsieve_prep" }, mode: 'copy', pattern: "delsieve_prep/*"
 
     input:
-    tuple val(patient_id), path(long_table), path(matrices), path(ctc_scite_inputs), path(overlap_qc), val(ref_fasta), val(cell_metadata)
+    tuple val(patient_id), path(long_table), val(ref_fasta), val(cell_metadata)
 
     output:
     tuple val(patient_id), path("delsieve_prep")
