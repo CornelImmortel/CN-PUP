@@ -62,3 +62,9 @@ patient_03_wxs_ctc_only	CTC20	deepvariant	/tzu-share-2/users/students/cornelusp/
 patient_03_wxs_ctc_only	CTC21	monovar	/tzu-share-2/users/students/cornelusp/CN-PUP2/CN-PUP/results/patient_03_wxs_ctc_only/split_calls/monovar/CTC21.monovar.split.vcf	
 patient_03_wxs_ctc_only	CTC21	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_hap_deep/variant_calling/haplotypecaller/CTC21-0/CTC21-0.haplotypecaller.filtered.vcf.gz	
 patient_03_wxs_ctc_only	CTC21	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_hap_deep/variant_calling/deepvariant/CTC21-0/CTC21-0.deepvariant.vcf.gz	
+patient_03_wxs_ctc_only	leuko	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/leuko-0/leuko-0.haplotypecaller.filtered.vcf.gz	
+patient_03_wxs_ctc_only	leuko	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/leuko-0/leuko-0.deepvariant.vcf.gz	
+patient_03_wxs_ctc_only	meta_liv01	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/meta_liv01-0/meta_liv01-0.haplotypecaller.filtered.vcf.gz	
+patient_03_wxs_ctc_only	meta_liv01	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/meta_liv01-0/meta_liv01-0.deepvariant.vcf.gz	
+patient_03_wxs_ctc_only	meta_liv02	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/meta_liv02-0/meta_liv02-0.haplotypecaller.filtered.vcf.gz	
+patient_03_wxs_ctc_only	meta_liv02	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/meta_liv02-0/meta_liv02-0.deepvariant.vcf.gz	

@@ -1,0 +1,7 @@
+patient_id	sample_id	sample_type	caller	vcf_path
+patient_03_wxs_ctc_only	meta_liv01	metastasis	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/meta_liv01-0/meta_liv01-0.haplotypecaller.filtered.vcf.gz
+patient_03_wxs_ctc_only	meta_liv01	metastasis	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/meta_liv01-0/meta_liv01-0.deepvariant.vcf.gz
+patient_03_wxs_ctc_only	meta_liv02	metastasis	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/meta_liv02-0/meta_liv02-0.haplotypecaller.filtered.vcf.gz
+patient_03_wxs_ctc_only	meta_liv02	metastasis	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/meta_liv02-0/meta_liv02-0.deepvariant.vcf.gz
+patient_03_wxs_ctc_only	leuko	leukocyte	haplotypecaller	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/haplotypecaller/leuko-0/leuko-0.haplotypecaller.filtered.vcf.gz
+patient_03_wxs_ctc_only	leuko	leukocyte	deepvariant	/tzu-share-2/users/students/cornelusp/pat_03_wxs_meta_leuko/variant_calling/deepvariant/leuko-0/leuko-0.deepvariant.vcf.gz
