@@ -272,6 +272,7 @@ process STANDARDIZE_EXTERNAL_CALLERS {
     publishDir { "${params.outdir}/${patient_id}/processed_calls" }, mode: 'copy', pattern: "comparison_project/processed_calls/**"
     publishDir { "${params.outdir}/${patient_id}/normalized_calls" }, mode: 'copy', pattern: "comparison_project/normalized_calls/**"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls" }, mode: 'copy', pattern: "comparison_project/comparable_calls/**"
+    publishDir { "${params.outdir}/${patient_id}/vep/external_existing" }, mode: 'copy', pattern: "comparison_project/vep_existing/**"
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
     publishDir { "${params.outdir}/${patient_id}/reports/variant_flowcharts" }, mode: 'copy', pattern: "comparison_project/reports/variant_flowcharts/**"
 
@@ -331,11 +332,15 @@ EOF
     export MIN_ALT_READS="${params.min_alt_reads}"
     export MIN_VAF="${params.min_vaf}"
     export SCCALLER_SOMATIC_MODE="${params.sccaller_mode}"
+    export RUN_EXISTING_VEP_FILTER="${params.run_vep_filter}"
+    export MAX_POPULATION_AF="${params.max_population_af}"
+    export KEEP_COSMIC="${params.keep_cosmic}"
 
     bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
       "\$PWD/comparison_project" \\
       "${ref_fasta}" \\
-      "\$PWD/comparison_project/config/samples.tsv"
+      "\$PWD/comparison_project/config/samples.tsv" \\
+      "${projectDir}"
 
     python "${projectDir}/bin/mutation_matrix/07_variant_flowcharts.py" \\
       --project "\$PWD/comparison_project" \\
@@ -399,6 +404,7 @@ process STANDARDIZE_INTERNAL_SCCALLER {
     conda "envs/bcftools.yml"
     publishDir { "${params.outdir}/${patient_id}/normalized_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/normalized_calls/sccaller/*"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/comparable_calls/sccaller/*"
+    publishDir { "${params.outdir}/${patient_id}/vep/external_existing" }, mode: 'copy', pattern: "comparison_project/vep_existing/**"
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
     publishDir { "${params.outdir}/${patient_id}/reports/variant_flowcharts" }, mode: 'copy', pattern: "comparison_project/reports/variant_flowcharts/**"
 
@@ -457,11 +463,15 @@ EOF
     export MIN_ALT_READS="${params.min_alt_reads}"
     export MIN_VAF="${params.min_vaf}"
     export SCCALLER_SOMATIC_MODE="${params.sccaller_mode}"
+    export RUN_EXISTING_VEP_FILTER="${params.run_vep_filter}"
+    export MAX_POPULATION_AF="${params.max_population_af}"
+    export KEEP_COSMIC="${params.keep_cosmic}"
 
     bash "${projectDir}/bin/mutation_matrix/02_process_raw_calls.sh" \\
       "\$PWD/comparison_project" \\
       "${ref_fasta}" \\
-      "\$PWD/comparison_project/config/samples.tsv"
+      "\$PWD/comparison_project/config/samples.tsv" \\
+      "${projectDir}"
 
     python "${projectDir}/bin/mutation_matrix/07_variant_flowcharts.py" \\
       --project "\$PWD/comparison_project" \\

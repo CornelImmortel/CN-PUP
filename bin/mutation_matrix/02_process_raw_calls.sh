@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$1"
 REF_FASTA="$2"
 SAMPLES_TSV="$3"
+PROJECT_CODE_DIR="${4:-}"
 
 mkdir -p "${PROJECT_DIR}/processed_calls" "${PROJECT_DIR}/normalized_calls" "${PROJECT_DIR}/comparable_calls" "${PROJECT_DIR}/logs"
 
@@ -18,6 +19,9 @@ keep_filters="${KEEP_FILTERS:-PASS,.}"
 min_dp="${MIN_TOTAL_DEPTH:-20}"
 min_alt="${MIN_ALT_READS:-4}"
 min_vaf="${MIN_VAF:-0}"
+run_existing_vep_filter="${RUN_EXISTING_VEP_FILTER:-false}"
+max_population_af="${MAX_POPULATION_AF:-0.001}"
+keep_cosmic="${KEEP_COSMIC:-true}"
 sccaller_somatic_mode="${SCCALLER_SOMATIC_MODE:-so_true}"
 
 filter_expr_common="(FILTER=\"PASS\" || FILTER=\".\") && GT!=\"0/0\" && GT!=\"0|0\" && GT!=\"./.\" && GT!=\".|.\" && FORMAT/DP>=${min_dp} && FORMAT/AD[0:1]>=${min_alt}"
@@ -41,6 +45,37 @@ process_common() {
     cp "$norm" "$comp"
   fi
   tabix -f -p vcf "$comp"
+
+  if [[ "$run_existing_vep_filter" == "true" && -n "$PROJECT_CODE_DIR" ]]; then
+    local vep_dir="${PROJECT_DIR}/vep_existing/${caller}"
+    local final="${PROJECT_DIR}/comparable_calls/${caller}/${sample_id}.${caller}.population_cosmic.comparable.vcf.gz"
+    local vep_tsv="${vep_dir}/${sample_id}.${caller}.existing_vep.tsv"
+    local annotations="${vep_dir}/${sample_id}.${caller}.population_cosmic.annotations.tsv"
+    local summary="${vep_dir}/${sample_id}.${caller}.population_cosmic.summary.tsv"
+    local filter_log="${PROJECT_DIR}/logs/${sample_id}.${caller}.existing_vep_filter.log"
+    mkdir -p "$vep_dir"
+    if bcftools view -h "$raw_vcf" | grep -q '##INFO=<ID=CSQ'; then
+      python "$PROJECT_CODE_DIR/bin/extract_existing_vep_from_vcf.py" \
+        --vcf "$raw_vcf" \
+        --output "$vep_tsv" \
+        > "$filter_log" 2>&1
+      python "$PROJECT_CODE_DIR/bin/filter_vcf_by_vep.py" \
+        --vcf "$comp" \
+        --vep "$vep_tsv" \
+        --output-vcf "${final%.gz}" \
+        --output-annotations "$annotations" \
+        --summary "$summary" \
+        --max-af "$max_population_af" \
+        $([[ "$keep_cosmic" == "true" ]] && printf '%s' '--keep-cosmic') \
+        >> "$filter_log" 2>&1
+      bgzip -f -c "${final%.gz}" > "$final"
+      tabix -f -p vcf "$final"
+      mv -f "$final" "$comp"
+      mv -f "${final}.tbi" "${comp}.tbi"
+    else
+      echo "No CSQ annotation found in $raw_vcf; existing-VEP filter skipped." > "$filter_log"
+    fi
+  fi
   echo "Comparable VCF: $comp"
 }
 
