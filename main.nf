@@ -299,7 +299,13 @@ EOF
 
     exclusion_inputs=()
     if [[ ( "${germline_mode}" == "precomputed_vcf" || "${germline_mode}" == "combined" ) && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
-      bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
+      if [[ ! -s "${ref_fasta}.fai" ]]; then
+        samtools faidx "${ref_fasta}"
+      fi
+      bcftools reheader -f "${ref_fasta}.fai" \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.with_contigs.vcf" \\
+        "${germline_vcf}"
+      bcftools view -v snps -f PASS,. "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.with_contigs.vcf" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz" \\
         2> "comparison_project/logs/${patient_id}.bulk_blood.norm.log"
@@ -308,7 +314,13 @@ EOF
     fi
 
     if [[ ( "${germline_mode}" == "leukocyte_vcf" || "${germline_mode}" == "combined" ) && -n "${leukocyte_vcf}" && "${leukocyte_vcf}" != "NA" ]]; then
-      bcftools view -v snps -f PASS,. "${leukocyte_vcf}" -Ou \\
+      if [[ ! -s "${ref_fasta}.fai" ]]; then
+        samtools faidx "${ref_fasta}"
+      fi
+      bcftools reheader -f "${ref_fasta}.fai" \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.with_contigs.vcf" \\
+        "${leukocyte_vcf}"
+      bcftools view -v snps -f PASS,. "comparison_project/bulk_exclusion/${patient_id}.leukocyte.with_contigs.vcf" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz" \\
         2> "comparison_project/logs/${patient_id}.leukocyte.norm.log"
@@ -437,7 +449,13 @@ EOF
 
     exclusion_inputs=()
     if [[ ( "${germline_mode}" == "precomputed_vcf" || "${germline_mode}" == "combined" ) && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
-      bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
+      if [[ ! -s "${ref_fasta}.fai" ]]; then
+        samtools faidx "${ref_fasta}"
+      fi
+      bcftools reheader -f "${ref_fasta}.fai" \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.with_contigs.vcf" \\
+        "${germline_vcf}"
+      bcftools view -v snps -f PASS,. "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.with_contigs.vcf" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz" \\
         2> "comparison_project/logs/${patient_id}.bulk_blood.norm.log"
@@ -446,7 +464,13 @@ EOF
     fi
 
     if [[ ( "${germline_mode}" == "leukocyte_vcf" || "${germline_mode}" == "combined" ) && -n "${leukocyte_vcf}" && "${leukocyte_vcf}" != "NA" ]]; then
-      bcftools view -v snps -f PASS,. "${leukocyte_vcf}" -Ou \\
+      if [[ ! -s "${ref_fasta}.fai" ]]; then
+        samtools faidx "${ref_fasta}"
+      fi
+      bcftools reheader -f "${ref_fasta}.fai" \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.with_contigs.vcf" \\
+        "${leukocyte_vcf}"
+      bcftools view -v snps -f PASS,. "comparison_project/bulk_exclusion/${patient_id}.leukocyte.with_contigs.vcf" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz" \\
         2> "comparison_project/logs/${patient_id}.leukocyte.norm.log"
@@ -732,10 +756,17 @@ process PREPARE_PRECOMPUTED_GERMLINE {
     """
     set -euo pipefail
 
+    if [[ ! -s "${ref_fasta}.fai" ]]; then
+      samtools faidx "${ref_fasta}"
+    fi
+    bcftools reheader -f "${ref_fasta}.fai" \
+      -o "${patient_id}.precomputed_germline.with_contigs.vcf" \
+      "${germline_vcf}"
+
     bcftools view \
       -v snps \
       -f PASS \
-      "${germline_vcf}" \
+      "${patient_id}.precomputed_germline.with_contigs.vcf" \
       -Ou \
     | bcftools norm \
       -f "${ref_fasta}" \
