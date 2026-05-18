@@ -1,0 +1,3 @@
+patient_id	sample_id	sample_type	caller	vcf_path
+patient_03_wxs_ctc_only	metastasis_1	metastasis	deepvariant	/path/to/metastasis.deepvariant.vcf.gz
+patient_03_wxs_ctc_only	primary_1	primary	deepvariant	/path/to/primary.deepvariant.vcf.gz

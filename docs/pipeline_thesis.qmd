@@ -1,0 +1,1273 @@
+---
+title: "CN-PUP: A Nextflow Pipeline for SNV-Based Analysis of Circulating Tumor Cell Heterogeneity"
+subtitle: "Thesis-oriented technical documentation and working notes"
+author: "Cornelus Palsma"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 4
+    number-sections: true
+    code-fold: false
+    smooth-scroll: true
+    theme: cosmo
+  pdf:
+    toc: true
+    number-sections: true
+bibliography: references.bib
+link-citations: true
+execute:
+  echo: false
+---
+
+# How To Use This Document {#sec-how-to-use}
+
+This document is a thesis-facing explanation of **CN-PUP**, a Nextflow pipeline
+for analysing single-cell DNA sequencing data from circulating tumor cells
+(CTCs). I wrote it as both a learning document and a Methods-style companion:
+it should help me understand what every step does, while also being clear
+enough for examiners or future users of the code.
+
+The document has two main roles:
+
+1. It explains the biological and computational motivation for the pipeline.
+2. It documents how the pipeline works, which files it expects, and how the
+   different execution modes connect to the thesis questions.
+
+Important internal links:
+
+- [Thesis context](#sec-thesis-context)
+- [High-level workflow](#sec-workflow-overview)
+- [Input data model](#sec-input-data-model)
+- [How the pipeline works](#sec-how-it-works)
+- [Mode-by-mode explanation](#sec-modes)
+- [Background subtraction](#sec-background-subtraction)
+- [Variant caller comparison](#sec-caller-comparison)
+- [Variant flowcharts](#sec-variant-flowcharts)
+- [Planned extensions](#sec-planned-extensions)
+- [Glossary](#sec-glossary)
+
+::: {.callout-note}
+This is a living technical document. Some parts describe implemented pipeline
+behavior, while other parts describe planned extensions that are relevant to the
+thesis but not fully implemented yet. I mark these explicitly where needed.
+:::
+
+# Thesis Context {#sec-thesis-context}
+
+## Tumor Evolution, ITH, and Therapy Resistance {#sec-ith}
+
+Cancer remains one of the leading causes of death worldwide, with nearly 20
+million new cases and 9.7 million deaths estimated in 2022 [@bray2024global].
+Although therapies have improved, relapse and treatment resistance remain major
+problems, especially in late-stage disease [@gillies2012evolutionary;
+@lim2019tumor]. A key reason is that tumors are not homogeneous masses of
+identical cells. They are evolving populations.
+
+Tumorigenesis is driven by the accumulation of genetic and epigenetic changes
+that promote proliferation, survival, immune escape, invasion, and other cancer
+hallmarks [@hanahan2022hallmarks]. Genomic instability contributes to this
+process by continuously generating new alterations during tumor growth
+[@requesens2024genomic]. Because tumor cells proliferate under strong selective
+pressure, different subclones can emerge, compete, and disseminate.
+
+This diversity is called **intra-tumor heterogeneity** (ITH). ITH can exist at
+the level of single nucleotide variants (SNVs), copy number alterations (CNAs),
+structural variants, methylation, transcriptional state, and phenotype. It has
+been demonstrated by multi-region sequencing studies, where different regions of
+the same tumor often contain partly distinct mutation sets
+[@gerlinger2012intratumor; @jamalhanjani2017tracking]. Metastases can also be
+highly heterogeneous, and recent work has shown that metastatic lesions may
+contain multiple subclones rather than a single uniform population
+[@albakir2023tracerx; @hessey2026metastasis].
+
+This matters clinically because therapy can select resistant subclones. A
+treatment may reduce most of the tumor burden while leaving behind cells that
+already carry resistance-associated features. These cells can then expand and
+drive relapse [@longley2005resistance]. Modern treatment strategies, including
+combination therapy and adaptive therapy, are partly motivated by this
+evolutionary view [@robert2015dabrafenib; @gatenby2009adaptive;
+@zhang2017adaptive].
+
+For my thesis, this creates the central biological problem: **to understand a
+patient's tumor evolution, I need methods that can measure heterogeneity rather
+than only a single consensus tumor profile**.
+
+## Circulating Tumor Cells as a Window Into ITH {#sec-ctc-context}
+
+ITH has traditionally been studied using multi-region tissue sampling and,
+more recently, circulating tumor DNA (ctDNA). Multi-region sampling is powerful
+because it preserves spatial information and can reveal how different tumor
+regions are related [@gerlinger2012intratumor; @jamalhanjani2017tracking].
+However, repeated multi-site biopsies are difficult to perform in living
+patients, especially longitudinally.
+
+ctDNA is more accessible because it can be measured from blood. It can track
+tumor burden and treatment response over time [@zhang2020ctdna]. However,
+ctDNA is a mixture of fragments released from many cells, and its composition
+depends on tumor shedding, cell death, tumor location, and other biological
+factors [@rachman2024ctdna]. It often lacks direct cellular context.
+
+Circulating tumor cells (CTCs) occupy an interesting middle ground. They are
+intact tumor-derived cells found in the bloodstream. They can potentially be
+sampled longitudinally like ctDNA, while retaining cell-level genomic context.
+This makes them attractive for studying ITH and tumor evolution
+[@markou2023ctcs; @zhan2023ctcmetastasis; @mitra2015emt]. CTC enumeration has
+prognostic value in several cancers [@bork2015ctc], and modern single-cell
+sequencing technologies now make it possible to profile CTC genomes at much
+higher resolution [@wang2015singlecell; @hawsawi2024singlecell].
+
+Several studies have used CTC sequencing to compare CTCs with tumors,
+metastases, or longitudinal disease states [@pawlikowska2019ctcs;
+@su2019sclc; @dutta2023minimumseq; @faugeroux2020prostatectc]. These studies
+motivate the use of CTCs for asking whether blood-borne tumor cells represent
+the primary tumor, metastatic lesions, specific subclones, or a distinct
+circulating compartment.
+
+## Phylodynamics and CTCs {#sec-phylodynamics}
+
+The thesis is not only about detecting mutations. It is also about using those
+mutations to infer relationships between cells and tissues. Phylodynamics
+combines evolutionary relationships with population structure and dynamics
+[@stadler2021phylodynamics]. In infectious disease, related ideas are used to
+track how viral variants spread through populations [@cardonaospina2021covid].
+In cancer, the analogous idea is to reconstruct how tumor subclones are related
+and how they change over space and time.
+
+Tumor phylogenies have been built from multi-region bulk data and from
+single-cell data [@cooper2015prostate; @yates2015breast;
+@singhal2024prostate]. CTC-based phylogenetic studies are newer, but they are
+especially relevant to this thesis because they can connect liquid biopsy with
+cell-level clonal structure [@gremmelspacher2025ctcclusters;
+@dutta2023minimumseq].
+
+The long-term goal is that CN-PUP produces reliable SNV matrices that can feed
+into phylogenetic tools such as CTC-SCITE and DelSieve. This is discussed in
+the [planned extensions](#sec-planned-phylogeny).
+
+## Why CTC Variant Calling Is Difficult {#sec-ctc-challenges}
+
+CTC sequencing is technically difficult. A single diploid cell contains only two
+copies of each autosomal locus, so whole genome amplification (WGA) is usually
+needed before sequencing. WGA can introduce amplification bias, allelic dropout,
+false-positive variants, and uneven coverage [@wang2015singlecell]. As a
+result, a variant observed in one CTC can represent:
+
+- a true somatic mutation in a tumor subclone,
+- a germline variant not properly removed,
+- a WGA or sequencing artifact,
+- a mapping or alignment problem,
+- or a caller-specific false positive.
+
+This is why the pipeline does not simply trust one variant caller. Instead, it
+supports comparison between multiple callers and emphasizes background
+subtraction using matched leukocyte and bulk blood samples. The distinction
+between true CTC-specific biology and single-cell technical noise is one of the
+central problems of the thesis.
+
+## Thesis Goal Connected To The Pipeline {#sec-thesis-goal}
+
+The thesis has two connected goals:
+
+1. To evaluate how well CTC DNA sequencing represents the clonal composition of
+   matched primary and metastatic tumor tissue.
+2. To develop a robust bioinformatics pipeline for analysing CTC single-cell DNA
+   sequencing and producing mutation sets suitable for overlap and phylogenetic
+   analysis.
+
+The main scientific questions are:
+
+- To what extent do CTC SNVs overlap with matched primary and metastatic tissue?
+- Can CTC sequencing alone reveal intra-patient clonal heterogeneity?
+- Can longitudinal CTC sequencing detect changes in clonal composition over
+  time?
+- How does the answer change as more CTCs are sequenced?
+
+CN-PUP is my working solution for the computational side of these questions.
+It is designed to take aligned sequencing data and/or caller VCFs, filter and
+normalize the variants, subtract likely germline/background variants, compare
+callers, and produce mutation matrices for downstream analysis.
+
+# Pipeline Purpose {#sec-pipeline-purpose}
+
+CN-PUP stands for the internal project name **CeciNestPasUnePipeline**, but in
+this document I use **CN-PUP** as the short name for the analysis workflow. The
+academic description is:
+
+> A Nextflow pipeline for SNV-based comparison of circulating tumor cells,
+> matched blood-derived background samples, primary tumors, and metastases.
+
+The pipeline currently focuses on SNVs. This is intentional. SNVs are discrete
+events that can be represented in tables, compared across cells and tissues,
+and converted into mutation matrices for phylogenetic inference. CNAs are
+planned as a complementary layer, discussed in [CNA integration](#sec-planned-cna).
+
+The pipeline is designed around seven practical tasks:
+
+1. Validate patient-level and cell-level input configuration.
+2. Run MonoVar jointly across single-cell BAMs when needed.
+3. Split joint MonoVar output into one VCF per cell.
+4. Import existing VCFs from MonoVar, HaplotypeCaller, DeepVariant, or SCcaller.
+5. Filter, normalize, and subtract germline/background variants.
+6. Produce comparable VCFs, mutation tables, matrices, and overlap reports.
+7. Produce per-CTC variant flowcharts that summarize filtering, background
+   subtraction, and sharing across CTCs or matched tissue.
+
+# High-Level Workflow {#sec-workflow-overview}
+
+At a high level, CN-PUP turns heterogeneous inputs into comparable per-cell,
+per-caller SNV sets.
+
+```{mermaid}
+flowchart TD
+    A[Patient TSV] --> B[CHECK_INPUTS]
+    B --> C{Selected execution mode}
+
+    C --> D[RUN_MONOVAR]
+    D --> E[SPLIT_MONOVAR]
+
+    C --> F[External VCF manifest]
+    F --> G[MonoVar split VCFs]
+    F --> H[HaplotypeCaller VCFs]
+    F --> I[DeepVariant VCFs]
+    F --> J[SCcaller VCFs]
+
+    K[Leukocyte VCF] --> M[Background exclusion set]
+    L[Bulk blood VCF] --> M
+
+    E --> N[Filter and normalize SNVs]
+    G --> N
+    H --> N
+    I --> N
+    J --> N
+
+    M --> O[Subtract germline/background variants]
+    N --> O
+
+    O --> P[Comparable VCFs]
+    P --> Q[Long mutation table]
+    Q --> R[Mutation matrices]
+    Q --> S[Overlap QC reports]
+    P --> U[Per-CTC variant flowcharts]
+    R --> T[Phylogenetic downstream analysis]
+```
+
+The key design principle is that every caller branch eventually produces the
+same contract:
+
+```text
+results/<patient_id>/comparable_calls/<caller>/<cell_id>.<caller>.comparable.vcf.gz
+```
+
+Once variants are in this comparable format, downstream scripts can merge them,
+build mutation matrices, and summarize overlap. This is described in
+[caller comparison and matrices](#sec-caller-comparison).
+
+# Input Data Model {#sec-input-data-model}
+
+CN-PUP is config-driven. Instead of hard-coding samples into the workflow, the
+user describes patients, cells, BAMs, and VCFs in TSV/YAML files under
+`configs/`.
+
+## Patient Sheet {#sec-patient-sheet}
+
+The patient sheet is the main entry point. It has one row per patient or
+patient-level analysis unit.
+
+```text
+patient_id
+ref_fasta
+monovar_bam_list
+cell_metadata
+germline_mode
+germline_vcf
+bulk_bam
+leukocyte_bam
+leukocyte_vcf
+```
+
+Conceptually:
+
+| Column | Meaning |
+|---|---|
+| `patient_id` | Name used for output directories and grouping. |
+| `ref_fasta` | Human reference FASTA used for calling and normalization. |
+| `monovar_bam_list` | Text file containing BAM paths for MonoVar joint calling. |
+| `cell_metadata` | Per-cell metadata table. |
+| `germline_mode` | Strategy for background/germline subtraction. |
+| `germline_vcf` | Precomputed germline or bulk blood VCF, depending on mode. |
+| `bulk_bam` | Matched bulk BAM, currently mainly used by SCcaller. |
+| `leukocyte_bam` | Matched leukocyte BAM, used for some MonoVar modes. |
+| `leukocyte_vcf` | Precomputed leukocyte VCF used for background subtraction. |
+
+Example for leukocyte-only subtraction:
+
+```text
+patient_id                 germline_mode   germline_vcf   leukocyte_vcf
+patient_03_wxs_ctc_only    leukocyte_vcf   NA             /path/to/leukocyte.monovar.split.vcf
+```
+
+Example for combined leukocyte and bulk blood subtraction:
+
+```text
+patient_id                 germline_mode   germline_vcf                leukocyte_vcf
+patient_03_wxs_ctc_only    combined        /path/to/bulk_blood.vcf.gz  /path/to/leukocyte.vcf
+```
+
+See [combined subtraction mode](#sec-mode-combined) for the logic.
+
+## Cell Metadata {#sec-cell-metadata}
+
+The cell metadata file has one row per cell:
+
+```text
+patient_id    cell_id    bam_path    cell_type
+```
+
+The `cell_id` is the biological label used downstream, such as `CTC1`,
+`CTC2`, or `leukocyte`. The `cell_type` field is useful for distinguishing
+CTCs from leukocytes or other sample types.
+
+This file is important for two reasons:
+
+1. MonoVar splitting uses it to map joint VCF samples back to cell names.
+2. SCcaller and BAM QC modes use it to find per-cell BAMs.
+
+## MonoVar BAM List {#sec-monovar-bam-list}
+
+MonoVar expects a text file containing one BAM path per line. CN-PUP stores
+this path in the patient sheet under `monovar_bam_list`.
+
+For CTC-only MonoVar calling, the BAM list should contain only the CTC BAMs.
+The leukocyte can then be used later as an external subtraction source. This
+separation is useful because it avoids mixing the leukocyte into the CTC joint
+calling cohort.
+
+## External Caller Manifest {#sec-caller-vcfs}
+
+Existing VCFs from different callers are described in `caller_vcfs.tsv`.
+
+```text
+patient_id    cell_id    caller    vcf_path    sccaller_mode
+```
+
+Supported caller names are:
+
+- `monovar`
+- `haplotypecaller`
+- `deepvariant`
+- `sccaller`
+
+The manifest lets CN-PUP compare callers without rerunning all caller software
+inside the same workflow. This is especially useful while testing multiple
+variant callers on public and Tzu-generated datasets.
+
+Example:
+
+```text
+patient_03_wxs_ctc_only    CTC1    monovar           /path/to/CTC1.monovar.split.vcf
+patient_03_wxs_ctc_only    CTC1    haplotypecaller   /path/to/CTC1.haplotypecaller.filtered.vcf.gz
+patient_03_wxs_ctc_only    CTC1    deepvariant       /path/to/CTC1.deepvariant.vcf.gz
+```
+
+## Params YAML {#sec-params-yaml}
+
+For reproducible runs, I prefer a params YAML file over a long command line.
+
+```yaml
+patients: configs/patients.patient_03_wxs_ctc_only_compare.tsv
+caller_vcfs: configs/caller_vcfs.patient_03_wxs_ctc_only_compare.tsv
+outdir: results
+run_monovar: false
+run_external_callers: true
+run_comparison: true
+run_snv_report: true
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+genome: GRCh38
+```
+
+This keeps the analysis easier to rerun and easier to document.
+
+# How The Pipeline Works {#sec-how-it-works}
+
+This section explains the pipeline step by step. The mode-specific subsections
+are in [Pipeline Modes](#sec-modes).
+
+## Step 1: Read Configuration {#sec-step-read-config}
+
+Nextflow starts from the patient sheet:
+
+```nextflow
+Channel
+  .fromPath(params.patients, checkIfExists: true)
+  .splitCsv(header: true, sep: '\t')
+```
+
+Each row is converted into a tuple containing the patient ID, reference FASTA,
+BAM lists, metadata, germline mode, and background files. This is the main
+data structure that carries patient-level information through the workflow.
+
+## Step 2: Validate Inputs {#sec-step-validate}
+
+The `CHECK_INPUTS` process verifies that required files exist and that the
+selected `germline_mode` is valid. For example:
+
+- `ref_fasta` must exist.
+- `monovar_bam_list` must exist if `--run_monovar true`.
+- `cell_metadata` must exist for MonoVar, SCcaller, or BAM QC modes.
+- `germline_vcf` must exist in `precomputed_vcf` mode.
+- `leukocyte_vcf` must exist in `leukocyte_vcf` mode.
+- both bulk and leukocyte evidence are expected in `combined` mode.
+
+Validation output is written to:
+
+```text
+results/validation/<patient_id>.input_check.txt
+```
+
+## Step 3: Generate Or Import Variant Calls {#sec-step-callers}
+
+CN-PUP can either run some callers internally or import precomputed VCFs.
+
+Currently:
+
+- MonoVar can be run internally from BAM files.
+- SCcaller can be run internally from existing BAMs.
+- HaplotypeCaller and DeepVariant are imported as external VCFs.
+
+This split is pragmatic. DeepVariant and HaplotypeCaller are often run through
+separate established workflows, while CN-PUP focuses on standardizing their
+outputs for comparison.
+
+## Step 4: Filter To Comparable SNVs {#sec-step-filter}
+
+Each caller has slightly different VCF structure and assumptions. The pipeline
+therefore converts raw caller output into a comparable SNV-only representation.
+
+For common callers (`monovar`, `haplotypecaller`, `deepvariant`), the downstream
+filter requires:
+
+- `FILTER` is `PASS` or `.`,
+- genotype is non-reference,
+- depth is at least `min_total_depth`,
+- alternate read count is at least `min_alt_reads`,
+- variant type is SNV.
+
+The current defaults are:
+
+```yaml
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+```
+
+These values should be treated as working thresholds, not universal truth. They
+may need adjustment by dataset, sequencing depth, WGA method, and caller.
+
+## Step 5: Normalize Variants {#sec-step-normalize}
+
+Before variants can be compared, they are normalized with `bcftools norm`.
+Normalization ensures that equivalent variants are represented consistently
+relative to the same reference FASTA.
+
+The workflow uses:
+
+```bash
+bcftools norm -f "$REF_FASTA" -m -any
+```
+
+This matters because comparisons such as `bcftools isec` depend on matching
+chromosome, position, reference allele, and alternate allele.
+
+## Step 6: Prepare Background Exclusion Set {#sec-step-exclusion}
+
+Matched leukocyte and bulk blood samples are used to remove variants that are
+likely germline or recurrent technical/background calls.
+
+The exclusion set can come from:
+
+- a precomputed bulk/germline VCF,
+- a leukocyte VCF,
+- a leukocyte split from MonoVar joint calling,
+- or a combined leukocyte plus bulk blood set.
+
+The combined strategy is currently important for the thesis because I want to
+subtract both:
+
+1. the single-cell leukocyte signal, which may capture WGA/cell-level artifacts,
+2. the bulk blood signal, which provides a stronger germline/background profile.
+
+See [Background Subtraction](#sec-background-subtraction) for details.
+
+## Step 7: Subtract Background Variants {#sec-step-subtract}
+
+The normalized cell/caller VCF is compared against the normalized exclusion VCF
+using `bcftools isec`.
+
+```bash
+bcftools isec -C -w1 cell.norm.vcf.gz exclusion.norm.vcf.gz
+```
+
+Conceptually, this keeps variants present in the cell/caller VCF but absent
+from the background VCF. The result is a comparable VCF enriched for candidate
+somatic CTC variants.
+
+## Step 8: Build Tables And Matrices {#sec-step-matrices}
+
+Comparable VCFs are converted into long mutation tables and binary matrices.
+The comparison branch reuses scripts under:
+
+```text
+bin/mutation_matrix/
+```
+
+The main products are:
+
+- long mutation table,
+- caller-specific and merged mutation matrices,
+- CTC-SCITE input matrices,
+- overlap QC reports.
+
+# Pipeline Modes {#sec-modes}
+
+CN-PUP can be run in different modes depending on which part of the analysis I
+want to perform.
+
+## Validation-Only Mode {#sec-mode-validation}
+
+Validation-only mode is the default. It checks whether the patient sheet is
+readable and whether the selected inputs are available.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  --patients configs/patients.tsv
+```
+
+Use this mode when:
+
+- setting up a new patient,
+- checking server paths,
+- testing a new config,
+- or debugging missing files.
+
+Output:
+
+```text
+results/validation/<patient_id>.input_check.txt
+```
+
+## MonoVar Calling Mode {#sec-mode-monovar}
+
+MonoVar is designed for single-cell variant calling and can jointly call
+variants across multiple single-cell BAMs. In CN-PUP, MonoVar is run from a
+patient-level BAM list.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.patient_03_wxs_ctc_only.tsv \
+  --run_monovar true \
+  --monovar_script /path/to/monovar.py \
+  --monovar_threads 6
+```
+
+Internally, CN-PUP runs `samtools mpileup` and pipes the result into MonoVar.
+The main output is:
+
+```text
+results/<patient_id>/raw_calls/monovar/<patient_id>.monovar.vcf
+```
+
+MonoVar calling is useful because it explicitly models single-cell data and
+jointly considers multiple cells. However, I still compare it with
+HaplotypeCaller and DeepVariant because caller choice can strongly influence
+the apparent mutation landscape.
+
+## MonoVar Splitting Mode {#sec-mode-monovar-split}
+
+MonoVar produces a joint VCF containing multiple samples. For downstream
+comparison, CN-PUP splits this into one VCF per cell.
+
+Outputs:
+
+```text
+results/<patient_id>/split_calls/monovar/<cell_id>.monovar.split.vcf
+results/<patient_id>/split_calls/monovar/<patient_id>.monovar.split_sample_map.tsv
+```
+
+The sample map is important because it records how VCF sample columns were
+matched to biological cell IDs.
+
+## External Caller Comparison Mode {#sec-mode-external}
+
+External comparison mode imports already-generated VCFs from `caller_vcfs.tsv`.
+This is the main mode for comparing MonoVar, HaplotypeCaller, and DeepVariant
+on the same CTCs.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.patient_03_wxs_ctc_only_compare.tsv \
+  --run_external_callers true \
+  --run_comparison true \
+  --caller_vcfs configs/caller_vcfs.patient_03_wxs_ctc_only_compare.tsv
+```
+
+Or with the params file:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml
+```
+
+The external branch standardizes each VCF and produces comparable files:
+
+```text
+results/<patient_id>/comparable_calls/<caller>/<cell_id>.<caller>.comparable.vcf.gz
+```
+
+## Leukocyte Subtraction Mode {#sec-mode-leukocyte}
+
+In leukocyte subtraction mode, the patient sheet uses:
+
+```text
+germline_mode = leukocyte_vcf
+```
+
+and `leukocyte_vcf` points to a VCF generated from the matched leukocyte.
+
+This mode is useful when:
+
+- a leukocyte VCF is already available,
+- no bulk blood VCF is ready yet,
+- or I want to specifically estimate how many CTC calls are also seen in a
+  single-cell leukocyte.
+
+Conceptually, this subtracts variants detected in the leukocyte from each CTC
+VCF. Such variants may include germline variants, WGA artifacts, recurrent
+alignment errors, or other background calls.
+
+## Bulk Blood Subtraction Mode {#sec-mode-bulk}
+
+Bulk blood subtraction uses a bulk/germline VCF as the exclusion set.
+
+In the patient sheet:
+
+```text
+germline_mode = precomputed_vcf
+germline_vcf  = /path/to/bulk_blood.vcf.gz
+```
+
+This mode is useful because bulk blood generally provides a stronger and more
+complete germline profile than a single leukocyte. A bulk sample has many cells
+and is less affected by single-cell WGA noise.
+
+For the thesis, this is important because it helps distinguish somatic CTC
+variants from inherited variants.
+
+## Combined Leukocyte Plus Bulk Blood Mode {#sec-mode-combined}
+
+Combined mode is the preferred mode once both background sources are available.
+
+In the patient sheet:
+
+```text
+germline_mode = combined
+germline_vcf  = /path/to/bulk_blood.vcf.gz
+leukocyte_vcf = /path/to/leukocyte.vcf
+```
+
+CN-PUP normalizes both VCFs, merges them into one exclusion set, and subtracts
+that combined set from each CTC/caller VCF.
+
+Biologically and technically, the two background sources are complementary:
+
+- **Bulk blood** is better for germline subtraction because it has broad,
+  high-confidence coverage across many blood cells.
+- **Single-cell leukocyte** is useful because it went through a more similar
+  single-cell workflow and may reveal WGA-like or single-cell-specific artifacts.
+
+For my thesis, this mode best matches the goal of retaining candidate somatic
+CTC variants while removing both germline and background technical signal.
+
+## SCcaller Mode {#sec-mode-sccaller}
+
+SCcaller can be run internally from existing cell BAMs and a matched bulk BAM.
+The current implementation assumes BAM files already exist; it does not perform
+full FASTQ preprocessing.
+
+Required inputs:
+
+- `cell_metadata`,
+- `bulk_bam`,
+- `ref_fasta`,
+- `--sccaller_script`,
+- `--sccaller_hsnp_vcf`.
+
+Example:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.sccaller.tsv \
+  --run_sccaller true \
+  --run_comparison true \
+  --sccaller_script /path/to/sccaller_v2.0.0.py \
+  --sccaller_hsnp_vcf /path/to/bulk.hg38.hsnp.biallelic.dbsnp.vcf
+```
+
+SCcaller-specific modes include:
+
+| Mode | Meaning |
+|---|---|
+| `so_true` | Require SCcaller internal `SO=True`. |
+| `external_bulk` | Ignore `SO`, then subtract external bulk/background VCF. |
+| `so_true_and_external_bulk` | Require `SO=True` and subtract external background. |
+| `no_bulk` | Diagnostic mode without bulk subtraction. |
+
+## VEP Filtering Mode {#sec-mode-vep}
+
+The VEP stage is intended to annotate comparable VCFs and filter using
+population allele frequency and COSMIC-related information.
+
+The motivation is that a variant found at high population frequency is less
+likely to be a private somatic tumor mutation. However, known cancer-associated
+variants may need to be retained even if they require special interpretation.
+
+This mode is still an optional downstream stage. It should be used carefully
+because annotation databases, cache versions, and genome builds must match the
+analysis.
+
+## SNV Report Mode {#sec-mode-report}
+
+The SNV report mode is intended to summarize results in a human-readable form.
+For thesis work, this will be useful for turning raw comparison outputs into
+figures and tables that can be interpreted without manually opening every VCF.
+
+## BAM QC Mode {#sec-mode-bam-qc}
+
+BAM QC mode is optional and uses alignment-level metrics to evaluate sample
+quality. This matters for single-cell sequencing because low coverage, uneven
+coverage, high duplication, or poor mapping can make a cell unreliable for
+variant interpretation.
+
+The long-term goal is to connect QC metrics with downstream variant counts and
+caller behavior. For example, a CTC with unusually many private SNVs but poor
+coverage uniformity may be more suspicious than a CTC with similar SNV counts
+and high-quality alignment metrics.
+
+# Variant Calling Strategy {#sec-variant-calling}
+
+## Why Compare Multiple Callers? {#sec-why-multiple-callers}
+
+Single-cell variant calling is difficult enough that I do not want to rely on
+one caller without comparison. HaplotypeCaller, DeepVariant, MonoVar, and
+SCcaller make different assumptions and may behave differently on WGA-amplified
+single-cell DNA.
+
+The comparison is useful for three reasons:
+
+1. **Robustness:** variants found by multiple callers may be more credible.
+2. **Sensitivity:** some callers may recover variants missed by others.
+3. **False positive estimation:** callers that produce many CTC-private calls
+   also found in leukocyte/background may be less reliable for this data type.
+
+This comparison is not only technical. It directly affects the biological
+interpretation of ITH. If one caller produces many private variants, this could
+look like high heterogeneity, but it may actually reflect artifacts.
+
+## HaplotypeCaller {#sec-haplotypecaller}
+
+HaplotypeCaller is widely used for germline variant calling and can be applied
+to single-cell BAMs as a baseline caller. It was not originally designed for
+WGA-amplified single-cell cancer genomes, so its output must be interpreted
+carefully. In CN-PUP, HaplotypeCaller VCFs are imported as external VCFs and
+standardized.
+
+## DeepVariant {#sec-deepvariant}
+
+DeepVariant uses a machine-learning-based approach to variant calling. Like
+HaplotypeCaller, it is often robust in standard sequencing contexts, but its
+behavior on single-cell WGA data must be evaluated empirically. In CN-PUP,
+DeepVariant VCFs are imported and processed through the same comparable-call
+branch as other external callers.
+
+## MonoVar {#sec-monovar-caller}
+
+MonoVar is specifically relevant because it was designed for single-cell DNA
+variant calling. It jointly models multiple cells, which can help distinguish
+true variants from single-cell noise. CN-PUP can run MonoVar internally and
+then split its joint output by cell.
+
+## SCcaller {#sec-sccaller-caller}
+
+SCcaller is another single-cell-oriented caller. It can use information from a
+matched bulk sample and heterozygous SNPs. In CN-PUP, SCcaller can be run from
+existing BAMs, then standardized into comparable VCFs.
+
+# Filtering, Normalization, and Background Subtraction {#sec-background-subtraction}
+
+## Why Background Subtraction Is Central {#sec-why-subtraction}
+
+The thesis question is about somatic tumor heterogeneity, not germline
+variation. Therefore, germline and background variants must be removed before
+interpreting CTC-specific or tissue-shared variants.
+
+Subtraction also helps with single-cell artifacts. If a variant is detected in
+a CTC and also in a leukocyte processed in a similar way, it may be a recurrent
+artifact or background call rather than a true tumor mutation.
+
+## Leukocyte Versus Bulk Blood {#sec-leuko-vs-bulk}
+
+Leukocyte and bulk blood evidence answer slightly different questions.
+
+| Background source | Strength | Weakness |
+|---|---|---|
+| Single-cell leukocyte | Similar single-cell processing and WGA context. | One cell only; sparse and noisy. |
+| Bulk blood | Better germline representation and more stable coverage. | Less similar to single-cell WGA artifacts. |
+
+For this reason, the most useful subtraction mode for the thesis is likely
+`combined`, where both are used.
+
+## What Subtraction Does Not Prove {#sec-subtraction-limits}
+
+After subtraction, a variant is not automatically a true somatic CTC mutation.
+It is only absent from the chosen background set. Remaining variants can still
+include artifacts, especially if:
+
+- coverage is low,
+- alternate read support is weak,
+- the locus is difficult to map,
+- WGA introduced errors,
+- or the background sample lacks coverage at that locus.
+
+Therefore, subtraction is a filtering step, not a final biological proof.
+
+# Caller Comparison And Mutation Matrices {#sec-caller-comparison}
+
+## Comparable VCFs {#sec-comparable-vcfs}
+
+The comparable VCF is the main standardized output. It contains filtered,
+normalized variants after optional background subtraction.
+
+Example path:
+
+```text
+results/patient_03_wxs_ctc_only/comparable_calls/deepvariant/CTC1.deepvariant.comparable.vcf.gz
+```
+
+The value of this format is that downstream code can treat all callers in a
+similar way.
+
+## Long Mutation Tables {#sec-long-tables}
+
+Comparable VCFs are converted into long tables where each row represents a
+variant observation in a sample/caller combination. This is easier to merge,
+filter, summarize, and inspect than raw VCFs.
+
+A long table can answer questions such as:
+
+- Which variants are seen in CTC1?
+- Which variants are shared between CTC1 and CTC2?
+- Which variants are called by both MonoVar and DeepVariant?
+- Which variants overlap with metastasis tissue?
+
+## Mutation Matrices {#sec-mutation-matrices}
+
+Mutation matrices represent variants as rows and samples as columns. A value of
+`1` means the variant is present in that sample; `0` means absent or not called.
+
+This format is useful for:
+
+- CTC overlap analysis,
+- subclone detection,
+- phylogenetic reconstruction,
+- comparing the number of sequenced CTCs with recovered mutation diversity.
+
+## Overlap QC {#sec-overlap-qc}
+
+Overlap QC reports summarize how much call sets overlap across cells and
+callers. This is important for judging whether a caller produces many private
+variants or whether there are shared patterns consistent with clonal structure.
+
+For the thesis, overlap can be examined at several levels:
+
+- CTC versus CTC,
+- CTC versus primary tumor,
+- CTC versus metastasis,
+- CTC versus leukocyte,
+- CTC versus bulk blood,
+- caller versus caller.
+
+# Variant Flowcharts {#sec-variant-flowcharts}
+
+The pipeline includes a first implementation of a **per-CTC variant flowchart**
+report. This report is inspired by flow diagrams used in CTC sequencing papers,
+where the variant set is progressively divided into biologically meaningful
+groups.
+
+For each sample/caller pair, CN-PUP writes:
+
+```text
+results/<patient_id>/reports/variant_flowcharts/variant_flow_summary.tsv
+results/<patient_id>/reports/variant_flowcharts/variant_flowcharts.md
+results/<patient_id>/reports/variant_flowcharts/mermaid/<cell>.<caller>.variant_flow.mmd
+```
+
+The TSV is the machine-readable version. The Mermaid files are the visual
+version and can be rendered directly in Quarto.
+
+Metastasis or primary tissue overlap can be enabled with an optional tissue VCF
+manifest:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml \
+  --tissue_vcfs configs/tissue_vcfs.tsv
+```
+
+The manifest format is:
+
+```text
+patient_id    sample_id      sample_type    caller       vcf_path
+patient_03    metastasis_1   metastasis     deepvariant  /path/to/metastasis.vcf.gz
+patient_03    primary_1      primary        deepvariant  /path/to/primary.vcf.gz
+```
+
+The current flowchart tracks:
+
+| Count | Interpretation |
+|---|---|
+| `raw_input_snvs` | SNVs present in the original input VCF for that sample/caller. |
+| `normalized_snvs` | SNVs remaining after caller-specific QC filtering and normalization. |
+| `seen_in_bulk_blood` | Normalized SNVs also seen in the bulk blood exclusion VCF, if available. |
+| `seen_in_leukocyte` | Normalized SNVs also seen in the leukocyte exclusion VCF, if available. |
+| `removed_by_any_background` | SNVs removed by the final background subtraction step. |
+| `comparable_snvs` | Final SNVs retained for downstream comparison. |
+| `shared_with_metastasis` | Retained SNVs also seen in metastasis VCFs, when those are configured. |
+| `shared_with_at_least_one_other_ctc` | Retained SNVs also found in at least one other CTC for the same caller. |
+| `shared_with_all_ctcs` | Retained SNVs found in all CTCs for the same caller. |
+| `non_synonymous` | Retained SNVs annotated as non-synonymous, when annotation is present. |
+| `listed_db_or_cosmic` | Retained SNVs with dbSNP/COSMIC-like annotation, when annotation is present. |
+| `predictive_protein_impact` | Retained SNVs with high/moderate or damaging-like protein impact annotation, when annotation is present. |
+
+The report is designed to answer questions such as:
+
+- How many variants did the caller produce initially?
+- How many were removed by QC filters?
+- How many overlap with bulk blood or leukocyte background?
+- How many candidate somatic variants remain?
+- Are retained variants shared with other CTCs?
+- Are retained variants shared with metastasis tissue?
+
+Example Mermaid structure:
+
+```{mermaid}
+flowchart TD
+  A["Raw input SNVs<br/>1200"] --> B["After QC filters and normalization<br/>640"]
+  B --> C["Seen in bulk blood exclusion<br/>180"]
+  B --> D["Seen in leukocyte exclusion<br/>95"]
+  B --> E["After background subtraction<br/>410"]
+  E --> F["Shared with metastasis<br/>52"]
+  E --> G["Shared with at least one other CTC<br/>130"]
+  E --> H["Shared with all CTCs for this caller<br/>12"]
+  E --> I["Non-synonymous<br/>80"]
+  I --> J["Listed in dbSNP/COSMIC annotation<br/>26"]
+  J --> K["Predicted protein impact<br/>14"]
+```
+
+::: {.callout-warning}
+The tissue VCF manifest is currently used only by the flowchart report. A later
+pipeline extension should promote primary and metastasis VCFs to first-class
+comparison samples so they also appear in the main mutation matrices.
+:::
+
+# Current Patient 03 WXS Comparison Setup {#sec-patient03-setup}
+
+The current working comparison config is:
+
+```text
+configs/patients.patient_03_wxs_ctc_only_compare.tsv
+configs/caller_vcfs.patient_03_wxs_ctc_only_compare.tsv
+configs/params.patient_03_wxs_ctc_only_compare.yml
+```
+
+The caller manifest contains:
+
+- 21 MonoVar split VCFs,
+- 21 HaplotypeCaller filtered VCFs,
+- 21 DeepVariant VCFs.
+
+At the moment, the config is set to leukocyte-only subtraction:
+
+```text
+germline_mode = leukocyte_vcf
+```
+
+Once the bulk blood VCF is available, the patient sheet should be updated to:
+
+```text
+germline_mode = combined
+germline_vcf  = /path/to/bulk_blood.vcf.gz
+leukocyte_vcf = /path/to/leukocyte.vcf
+```
+
+Then the same params-file command can be rerun:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml
+```
+
+# Output Interpretation {#sec-output-interpretation}
+
+## Main Output Directories {#sec-output-dirs}
+
+Typical output structure:
+
+```text
+results/
+  <patient_id>/
+    raw_calls/
+    split_calls/
+    processed_calls/
+    normalized_calls/
+    comparable_calls/
+    caller_comparison/
+    germline_exclusion/
+    logs/
+  validation/
+```
+
+Important directories:
+
+| Directory | Meaning |
+|---|---|
+| `raw_calls/` | Raw caller output generated by CN-PUP. |
+| `split_calls/` | Per-cell MonoVar VCFs after splitting. |
+| `processed_calls/` | Filtered caller VCFs before final normalization/subtraction. |
+| `normalized_calls/` | Normalized VCFs. |
+| `comparable_calls/` | Final per-cell, per-caller VCFs after standardization. |
+| `caller_comparison/` | Merged tables, matrices, and overlap reports. |
+| `logs/` | Process logs for debugging and reproducibility. |
+
+## How I Should Read The Results {#sec-reading-results}
+
+A practical interpretation workflow is:
+
+1. Check `results/validation/` to confirm the intended files were used.
+2. Check logs for failures or suspicious filtering behavior.
+3. Count variants before and after subtraction.
+4. Compare variant counts across callers and cells.
+5. Inspect overlap reports.
+6. Use mutation matrices for clonal and phylogenetic analysis.
+
+If a CTC has many more private variants than all others, I should not
+immediately interpret it as a highly divergent subclone. I should first check
+coverage, depth, WGA quality, caller agreement, and leukocyte/bulk overlap.
+
+# Planned Extensions {#sec-planned-extensions}
+
+## FASTA And Reference Preparation {#sec-planned-fasta}
+
+A future module should validate and prepare reference FASTA files. This could
+include:
+
+- checking that `.fai` exists,
+- checking that sequence dictionaries exist when required,
+- validating chromosome naming consistency,
+- indexing missing reference files,
+- recording reference genome version in pipeline metadata.
+
+This matters because mismatched references can silently break variant
+normalization and comparison.
+
+## Bulk Blood Variant Calling {#sec-planned-bulk-calling}
+
+The current workflow can subtract a bulk blood VCF, but it does not yet run
+DeepVariant or HaplotypeCaller on the bulk blood BAM internally. A future mode
+could add:
+
+```text
+bulk_bam -> HaplotypeCaller/DeepVariant -> bulk_blood.vcf.gz -> exclusion set
+```
+
+This would make the combined subtraction mode more automated.
+
+## Primary And Metastasis Comparison {#sec-planned-metastasis}
+
+For the thesis, CTCs need to be compared with matched primary and metastatic
+tissue where available. This requires adding tissue-level VCFs to the
+comparison model.
+
+Possible design:
+
+```text
+sample_id    sample_type    caller    vcf_path
+CTC1         ctc            deepvariant    ...
+primary      primary        deepvariant    ...
+metastasis1  metastasis     deepvariant    ...
+bulk_blood   blood          deepvariant    ...
+```
+
+This would allow mutation classes such as:
+
+- shared by CTC and primary,
+- shared by CTC and metastasis,
+- shared by all tumor compartments,
+- CTC-only,
+- tissue-only.
+
+## CNA Integration {#sec-planned-cna}
+
+Copy number alteration analysis is planned as a second layer after SNV analysis.
+CNA profiles could help:
+
+- confirm clonal relationships inferred from SNVs,
+- identify large-scale genomic events shared between CTCs and tissues,
+- interpret SNV calls in deleted or amplified regions,
+- detect subclonal structure that is not visible from SNVs alone.
+
+For example, if a region is deleted in several cells, SNV absence in that region
+may not mean the mutation was never present. Conversely, variants called in
+regions with inconsistent copy number may need special caution.
+
+## Phylogenetic Downstream Analysis {#sec-planned-phylogeny}
+
+The final thesis analysis will likely use mutation matrices as input for
+phylogenetic tools such as CTC-SCITE and DelSieve. CN-PUP should therefore
+produce matrices with clear assumptions:
+
+- which caller was used,
+- which background subtraction was used,
+- which depth thresholds were used,
+- whether missing calls are treated as absence or unknown,
+- which cells were excluded due to QC.
+
+This is important because phylogenetic inference is sensitive to false
+positives, false negatives, allelic dropout, and missing data.
+
+## Sampling Saturation Analysis {#sec-planned-saturation}
+
+One thesis question is how the number of sequenced CTCs affects the recovered
+mutation profile. A future analysis module could repeatedly sample subsets of
+CTCs and measure:
+
+- number of unique variants recovered,
+- overlap with primary tumor,
+- overlap with metastasis,
+- number of inferred subclones,
+- stability of phylogenetic tree structure.
+
+This would help answer whether mutation information plateaus after a certain
+number of CTCs.
+
+# Reproducibility {#sec-reproducibility}
+
+CN-PUP uses Nextflow because it makes the workflow more reproducible and
+modular. Each process has declared inputs and outputs, and Conda environments
+can be used to manage software dependencies.
+
+Main reproducibility principles:
+
+- keep sample definitions in config files,
+- keep commands in params files or documented scripts,
+- record reference genome paths and versions,
+- record caller versions,
+- keep raw caller outputs separate from filtered/comparable outputs,
+- use Git to track changes in workflow code and config templates.
+
+Example reproducible run:
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml \
+  -resume
+```
+
+# Limitations And Cautions {#sec-limitations}
+
+CN-PUP is under active development. Important limitations include:
+
+- HaplotypeCaller and DeepVariant are currently imported as external VCFs, not
+  run internally.
+- Bulk blood VCF generation is not yet automated.
+- CNA analysis is not yet implemented.
+- Phylogenetic analysis is downstream/planned rather than fully integrated.
+- Thresholds such as `min_total_depth` and `min_alt_reads` are working defaults.
+- Single-cell false positives and allelic dropout remain major interpretation
+  problems even after filtering.
+
+The most important conceptual caution is that a final comparable VCF is not a
+perfect truth set. It is a filtered hypothesis set. Biological conclusions
+should be based on overlap patterns, caller agreement, background subtraction,
+QC metrics, and consistency with matched tissue data.
+
+# Appendix: Key Commands {#sec-appendix-commands}
+
+## Validation Only {#sec-command-validation}
+
+```bash
+nextflow run main.nf \
+  --patients configs/patients.tsv
+```
+
+## MonoVar Calling {#sec-command-monovar}
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.patient_03_wxs_ctc_only.tsv \
+  --run_monovar true \
+  --monovar_script /path/to/monovar.py \
+  --monovar_threads 6
+```
+
+## External Caller Comparison {#sec-command-external}
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  --patients configs/patients.patient_03_wxs_ctc_only_compare.tsv \
+  --run_external_callers true \
+  --run_comparison true \
+  --caller_vcfs configs/caller_vcfs.patient_03_wxs_ctc_only_compare.tsv
+```
+
+## Preferred Params-File Run {#sec-command-params}
+
+```bash
+nextflow run main.nf \
+  -profile conda \
+  -params-file configs/params.patient_03_wxs_ctc_only_compare.yml
+```
+
+# Glossary {#sec-glossary}
+
+| Term | Meaning |
+|---|---|
+| CTC | Circulating tumor cell. |
+| ITH | Intra-tumor heterogeneity. |
+| SNV | Single nucleotide variant. |
+| CNA | Copy number alteration. |
+| WGA | Whole genome amplification. |
+| VCF | Variant call format. |
+| BAM | Binary alignment map file. |
+| Germline subtraction | Removing variants likely inherited or present in matched normal tissue. |
+| Background subtraction | Broader term including germline and technical/background calls. |
+| Comparable VCF | CN-PUP standardized, filtered, normalized VCF used for downstream comparison. |
+| Mutation matrix | Table encoding variant presence/absence across cells or samples. |
+
+# References {.unnumbered}

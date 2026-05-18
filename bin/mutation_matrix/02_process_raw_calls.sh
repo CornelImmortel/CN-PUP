@@ -8,7 +8,9 @@ SAMPLES_TSV="$3"
 mkdir -p "${PROJECT_DIR}/processed_calls" "${PROJECT_DIR}/normalized_calls" "${PROJECT_DIR}/comparable_calls" "${PROJECT_DIR}/logs"
 
 bulk_exclusion=""
-if compgen -G "${PROJECT_DIR}/bulk_exclusion/*.norm.vcf.gz" > /dev/null; then
+if compgen -G "${PROJECT_DIR}/bulk_exclusion/*.external_exclusion.norm.vcf.gz" > /dev/null; then
+  bulk_exclusion="$(ls "${PROJECT_DIR}"/bulk_exclusion/*.external_exclusion.norm.vcf.gz | head -n 1)"
+elif compgen -G "${PROJECT_DIR}/bulk_exclusion/*.norm.vcf.gz" > /dev/null; then
   bulk_exclusion="$(ls "${PROJECT_DIR}"/bulk_exclusion/*.norm.vcf.gz | head -n 1)"
 fi
 

@@ -1,0 +1,11 @@
+patients: configs/patients.patient_03_wxs_ctc_only_compare.tsv
+caller_vcfs: configs/caller_vcfs.patient_03_wxs_ctc_only_compare.tsv
+outdir: results
+run_monovar: false
+run_external_callers: true
+run_comparison: true
+run_snv_report: true
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+genome: GRCh38

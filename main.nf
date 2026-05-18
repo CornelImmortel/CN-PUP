@@ -88,7 +88,7 @@ workflow {
     checked_ch.view { "Validated patient: ${it[0]} -> ${it[9]}" }
 
     checked_info_ch = checked_ch.map { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
-        tuple(patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam)
+        tuple(patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf)
     }
 
     comparison_inputs = Channel.empty()
@@ -240,7 +240,7 @@ workflow {
     }
 
     if (params.run_sccaller) {
-        sccaller_input_ch = checked_info_ch.flatMap { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam ->
+        sccaller_input_ch = checked_info_ch.flatMap { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
             cellMetadataRows(patient_id, cell_metadata).findAll { row -> !isLeukocyteCell(row[1]) }.collect { row ->
                 tuple(row[0], row[1], row[2], ref_fasta, bulk_bam, resolveInputPath(params.sccaller_hsnp_vcf))
             }
@@ -273,14 +273,16 @@ process STANDARDIZE_EXTERNAL_CALLERS {
     publishDir { "${params.outdir}/${patient_id}/normalized_calls" }, mode: 'copy', pattern: "comparison_project/normalized_calls/**"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls" }, mode: 'copy', pattern: "comparison_project/comparable_calls/**"
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
+    publishDir { "${params.outdir}/${patient_id}/reports/variant_flowcharts" }, mode: 'copy', pattern: "comparison_project/reports/variant_flowcharts/**"
 
     input:
-    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam)
+    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf)
 
     output:
     tuple val(patient_id), path("comparison_project/comparable_calls/*/*.comparable.vcf.gz")
 
     script:
+    def tissue_vcfs_arg = params.tissue_vcfs ? "--tissue-vcfs ${resolveInputPath(params.tissue_vcfs)}" : ""
     def samples_tsv = rows.collect { r ->
         def mode = r[3] ?: params.sccaller_mode
         "${r[0]}\t${r[1].toString().toLowerCase()}\t${r[2]}\t${mode}"
@@ -294,11 +296,34 @@ sample_id	caller	raw_vcf	sccaller_mode
 ${samples_tsv}
 EOF
 
-    if [[ "${germline_mode}" == "precomputed_vcf" && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
+    exclusion_inputs=()
+    if [[ ( "${germline_mode}" == "precomputed_vcf" || "${germline_mode}" == "combined" ) && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
       bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.bulk_blood.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz"
+      exclusion_inputs+=("comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz")
+    fi
+
+    if [[ ( "${germline_mode}" == "leukocyte_vcf" || "${germline_mode}" == "combined" ) && -n "${leukocyte_vcf}" && "${leukocyte_vcf}" != "NA" ]]; then
+      bcftools view -v snps -f PASS,. "${leukocyte_vcf}" -Ou \\
+      | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.leukocyte.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz"
+      exclusion_inputs+=("comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz")
+    fi
+
+    if (( \${#exclusion_inputs[@]} == 1 )); then
+      cp "\${exclusion_inputs[0]}" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
+      cp "\${exclusion_inputs[0]}.tbi" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz.tbi"
+    elif (( \${#exclusion_inputs[@]} > 1 )); then
+      bcftools concat -a "\${exclusion_inputs[@]}" -Ou \\
+      | bcftools sort -Ou \\
+      | bcftools norm -d exact -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
-        2> "comparison_project/logs/${patient_id}.external_exclusion.norm.log"
+        2> "comparison_project/logs/${patient_id}.external_exclusion.merge.log"
       tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
     fi
 
@@ -311,6 +336,11 @@ EOF
       "\$PWD/comparison_project" \\
       "${ref_fasta}" \\
       "\$PWD/comparison_project/config/samples.tsv"
+
+    python "${projectDir}/bin/mutation_matrix/07_variant_flowcharts.py" \\
+      --project "\$PWD/comparison_project" \\
+      --samples-tsv "\$PWD/comparison_project/config/samples.tsv" \\
+      --output-dir "\$PWD/comparison_project/reports/variant_flowcharts" ${tissue_vcfs_arg}
     """
 }
 
@@ -370,14 +400,16 @@ process STANDARDIZE_INTERNAL_SCCALLER {
     publishDir { "${params.outdir}/${patient_id}/normalized_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/normalized_calls/sccaller/*"
     publishDir { "${params.outdir}/${patient_id}/comparable_calls/sccaller" }, mode: 'copy', pattern: "comparison_project/comparable_calls/sccaller/*"
     publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "comparison_project/logs/*"
+    publishDir { "${params.outdir}/${patient_id}/reports/variant_flowcharts" }, mode: 'copy', pattern: "comparison_project/reports/variant_flowcharts/**"
 
     input:
-    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam)
+    tuple val(patient_id), val(rows), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf)
 
     output:
     tuple val(patient_id), path("comparison_project/comparable_calls/sccaller/*.comparable.vcf.gz")
 
     script:
+    def tissue_vcfs_arg = params.tissue_vcfs ? "--tissue-vcfs ${resolveInputPath(params.tissue_vcfs)}" : ""
     def samples_tsv = rows.collect { r ->
         "${r[0]}\tsccaller\t${r[1]}\t${params.sccaller_mode}"
     }.join('\n')
@@ -390,11 +422,34 @@ sample_id	caller	raw_vcf	sccaller_mode
 ${samples_tsv}
 EOF
 
-    if [[ "${germline_mode}" == "precomputed_vcf" && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
+    exclusion_inputs=()
+    if [[ ( "${germline_mode}" == "precomputed_vcf" || "${germline_mode}" == "combined" ) && -n "${germline_vcf}" && "${germline_vcf}" != "NA" ]]; then
       bcftools view -v snps -f PASS,. "${germline_vcf}" -Ou \\
       | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.bulk_blood.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz"
+      exclusion_inputs+=("comparison_project/bulk_exclusion/${patient_id}.bulk_blood.norm.vcf.gz")
+    fi
+
+    if [[ ( "${germline_mode}" == "leukocyte_vcf" || "${germline_mode}" == "combined" ) && -n "${leukocyte_vcf}" && "${leukocyte_vcf}" != "NA" ]]; then
+      bcftools view -v snps -f PASS,. "${leukocyte_vcf}" -Ou \\
+      | bcftools norm -f "${ref_fasta}" -m -any -Oz \\
+        -o "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz" \\
+        2> "comparison_project/logs/${patient_id}.leukocyte.norm.log"
+      tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz"
+      exclusion_inputs+=("comparison_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz")
+    fi
+
+    if (( \${#exclusion_inputs[@]} == 1 )); then
+      cp "\${exclusion_inputs[0]}" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
+      cp "\${exclusion_inputs[0]}.tbi" "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz.tbi"
+    elif (( \${#exclusion_inputs[@]} > 1 )); then
+      bcftools concat -a "\${exclusion_inputs[@]}" -Ou \\
+      | bcftools sort -Ou \\
+      | bcftools norm -d exact -Oz \\
         -o "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz" \\
-        2> "comparison_project/logs/${patient_id}.external_exclusion.norm.log"
+        2> "comparison_project/logs/${patient_id}.external_exclusion.merge.log"
       tabix -f -p vcf "comparison_project/bulk_exclusion/${patient_id}.external_exclusion.norm.vcf.gz"
     fi
 
@@ -407,6 +462,11 @@ EOF
       "\$PWD/comparison_project" \\
       "${ref_fasta}" \\
       "\$PWD/comparison_project/config/samples.tsv"
+
+    python "${projectDir}/bin/mutation_matrix/07_variant_flowcharts.py" \\
+      --project "\$PWD/comparison_project" \\
+      --samples-tsv "\$PWD/comparison_project/config/samples.tsv" \\
+      --output-dir "\$PWD/comparison_project/reports/variant_flowcharts" ${tissue_vcfs_arg}
     """
 }
 
