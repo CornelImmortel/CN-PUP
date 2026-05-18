@@ -714,6 +714,9 @@ process DELSIEVE_DATA_COLLECTOR {
     """
     set -euo pipefail
 
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
+
     mkdir -p delsieve_stage1
 
     if [[ -z "${params.delsieve_template_stage1}" ]]; then
@@ -767,6 +770,9 @@ process RUN_DELSIEVE_STAGE1 {
     """
     set -euo pipefail
 
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
+
     mkdir -p delsieve_stage1_run
 
     "${params.delsieve_beast}" \\
@@ -795,6 +801,9 @@ process DELSIEVE_TREE_ANNOTATOR {
     script:
     """
     set -euo pipefail
+
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
 
     mkdir -p delsieve_stage1_tree
 
