@@ -55,19 +55,22 @@ def select_candidates(args):
             if not var_id or sample_id not in ctc_ids:
                 continue
             ref = row.get("ref", "").upper()
-            alt = row.get("alt", "").upper()
-            if len(ref) != 1 or len(alt) != 1 or ref not in "ACGT" or alt not in "ACGT" or ref == alt:
+            alt_base = row.get("alt", "").upper()
+            if len(ref) != 1 or len(alt_base) != 1 or ref not in "ACGT" or alt_base not in "ACGT" or ref == alt_base:
+                continue
+            chrom_label = row.get("chrom", "").upper().removeprefix("CHR")
+            if chrom_label in {"M", "MT"}:
                 continue
             if allowed_callers is not None and caller not in allowed_callers:
                 continue
             total = to_float(row.get("total_depth") or row.get("DP"))
-            alt = to_float(row.get("altread"))
+            alt_reads = to_float(row.get("altread"))
             vaf = to_float(row.get("vaf"))
-            if vaf is None and total and alt is not None:
-                vaf = alt / total if total > 0 else None
-            if total is None or alt is None:
+            if vaf is None and total and alt_reads is not None:
+                vaf = alt_reads / total if total > 0 else None
+            if total is None or alt_reads is None:
                 continue
-            if total < args.min_total_depth or alt < args.min_alt_reads or (vaf or 0.0) < args.min_vaf:
+            if total < args.min_total_depth or alt_reads < args.min_alt_reads or (vaf or 0.0) < args.min_vaf:
                 continue
             support[var_id].add(sample_id)
             callers[var_id].add(caller)
@@ -249,6 +252,8 @@ def parse_mpileup(args):
         counts_writer.writerow(["=mutations="])
         counts_writer.writerows(data_rows)
         counts_writer.writerow(["=background="])
+        for _ in range(5):
+            counts_writer.writerow(["0,0"])
 
 
 def main():

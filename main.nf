@@ -694,11 +694,13 @@ process PREPARE_DELSIEVE_INPUTS {
         --output-dir "\$PWD/delsieve_prep"
     else
       touch "\$PWD/delsieve_prep/candidate_sites.mpileup"
+      sample_count=\$(awk '{print NF; exit}' "\$PWD/delsieve_prep/cell_names")
       {
-        printf "=numSamples=\\n0\\n"
+        printf "=numSamples=\\n\$sample_count\\n"
         printf "=numCandidateMutatedSites=\\n0\\n"
         printf "=numBackgroundSites=\\n0\\n"
         printf "=mutations=\\n=background=\\n"
+        printf "0,0\\n0,0\\n0,0\\n0,0\\n0,0\\n"
       } > "\$PWD/delsieve_prep/read_counts.full_support_coverage.tsv"
       printf "var_id\tchrom\tpos\tref\tcandidate_alt\tcell_id\tA\tC\tG\tT\talt1\talt2\talt3\tref_count\tcoverage\\n" > "\$PWD/delsieve_prep/read_counts.human_readable.tsv"
     fi
@@ -755,6 +757,27 @@ process DELSIEVE_DATA_COLLECTOR {
       echo "DelSIEVE data declares \$declared_cells cells, but ${delsieve_prep}/cell_names contains \$cell_count cells." >&2
       exit 1
     fi
+    declared_sites=\$(awk 'prev == "=numCandidateMutatedSites=" { print; exit } { prev=\$0 }' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
+    if [[ "\$declared_sites" -eq 0 ]]; then
+      echo "No DelSIEVE candidate sites were found. Check ${delsieve_prep}/candidate_summary.tsv." >&2
+      exit 1
+    fi
+    usable_sites=\$(awk -v ignore_sex="${params.delsieve_ignore_sex}" '
+      \$0 == "=mutations=" { in_mut=1; next }
+      \$0 == "=background=" { in_mut=0 }
+      in_mut {
+        chrom = toupper(\$1)
+        sub(/^CHR/, "", chrom)
+        if (chrom == "M" || chrom == "MT") next
+        if (ignore_sex == "true" && (chrom == "X" || chrom == "Y")) next
+        n++
+      }
+      END { print n + 0 }
+    ' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
+    if [[ "\$usable_sites" -eq 0 ]]; then
+      echo "No DelSIEVE candidate sites remain after DelSIEVE chromosome filtering. Check mitochondrial/sex chromosome settings." >&2
+      exit 1
+    fi
     bad_mutation_row=\$(awk -v expected="\$((cell_count + 4))" '
       \$0 == "=mutations=" { in_mut=1; next }
       \$0 == "=background=" { in_mut=0 }
@@ -763,6 +786,15 @@ process DELSIEVE_DATA_COLLECTOR {
     if [[ -n "\$bad_mutation_row" ]]; then
       echo "DelSIEVE mutation row has the wrong number of columns at row \$bad_mutation_row; expected \$((cell_count + 4))." >&2
       echo "Rows must be: chrom pos ref alt followed by one 'alt1,alt2,alt3;count1,count2,count3,coverage' field per cell." >&2
+      exit 1
+    fi
+    background_rows=\$(awk '
+      \$0 == "=background=" { in_bg=1; next }
+      in_bg && NF > 0 { n++ }
+      END { print n + 0 }
+    ' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
+    if [[ "\$background_rows" -ne 5 ]]; then
+      echo "DelSIEVE datatype 1 requires five background rows; found \$background_rows." >&2
       exit 1
     fi
 
@@ -860,7 +892,7 @@ process DELSIEVE_TREE_ANNOTATOR {
       exit 1
     fi
 
-    "${params.delsieve_treeannotator}" ${version_file_args} TreeAnnotatorLauncher \\
+    "${params.delsieve_treeannotator}" ${version_file_args} ScsTreeAnnotatorLauncher \\
       -burnin "${params.delsieve_tree_burnin}" \\
       -heights "${params.delsieve_tree_heights}" \\
       "\$tree_file" \\
