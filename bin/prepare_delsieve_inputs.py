@@ -9,6 +9,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
+TSV_KWARGS = {"delimiter": "\t", "lineterminator": "\n"}
+
+
 def open_text(path: str):
     return gzip.open(path, "rt", encoding="utf-8") if str(path).endswith(".gz") else open(path, "r", encoding="utf-8")
 
@@ -96,7 +99,7 @@ def select_candidates(args):
             "var_id", "chrom", "pos", "ref", "alt", "ctc_support", "supporting_ctcs",
             "callers", "gene_symbol", "protein_change", "consequence",
         ]
-        writer = csv.DictWriter(out, fieldnames=cols, delimiter="\t")
+        writer = csv.DictWriter(out, fieldnames=cols, **TSV_KWARGS)
         writer.writeheader()
         for row in kept:
             var_id = row["var_id"]
@@ -123,14 +126,14 @@ def select_candidates(args):
     with open(outdir / "cell_names", "w", encoding="utf-8") as out:
         out.write(" ".join(cell for cell, _ in cells) + "\n")
     with open(outdir / "cell_names.tsv", "w", encoding="utf-8", newline="") as out:
-        writer = csv.writer(out, delimiter="\t")
+        writer = csv.writer(out, **TSV_KWARGS)
         writer.writerow(["cell_id", "bam_path"])
         writer.writerows(cells)
     with open(outdir / "bams.txt", "w", encoding="utf-8") as out:
         for _, bam in cells:
             out.write(f"{bam}\n")
     with open(outdir / "candidate_summary.tsv", "w", encoding="utf-8", newline="") as out:
-        writer = csv.writer(out, delimiter="\t")
+        writer = csv.writer(out, **TSV_KWARGS)
         writer.writerow(["metric", "value"])
         writer.writerow(["candidate_sites", len(kept)])
         writer.writerow(["ctc_cells", len(cells)])
@@ -184,9 +187,9 @@ def parse_mpileup(args):
     with open(args.mpileup, "r", encoding="utf-8") as pile, \
             open(outdir / "read_counts.full_support_coverage.with_metadata.tsv", "w", encoding="utf-8", newline="") as metadata_counts_out, \
             open(outdir / "read_counts.human_readable.tsv", "w", encoding="utf-8", newline="") as readable_out:
-        metadata_counts_writer = csv.writer(metadata_counts_out, delimiter="\t")
+        metadata_counts_writer = csv.writer(metadata_counts_out, **TSV_KWARGS)
         readable_cols = ["var_id", "chrom", "pos", "ref", "candidate_alt", "cell_id", "A", "C", "G", "T", "alt1", "alt2", "alt3", "ref_count", "coverage"]
-        readable_writer = csv.DictWriter(readable_out, fieldnames=readable_cols, delimiter="\t")
+        readable_writer = csv.DictWriter(readable_out, fieldnames=readable_cols, **TSV_KWARGS)
         readable_writer.writeheader()
         header = ["chrom", "pos", "ref", "candidate_alt", "var_id"]
         for cell in cells:
@@ -242,7 +245,7 @@ def parse_mpileup(args):
             data_rows.append(data_row)
 
     with open(outdir / "read_counts.full_support_coverage.tsv", "w", encoding="utf-8", newline="") as counts_out:
-        counts_writer = csv.writer(counts_out, delimiter="\t")
+        counts_writer = csv.writer(counts_out, **TSV_KWARGS)
         counts_writer.writerow(["=numSamples="])
         counts_writer.writerow([len(cells)])
         counts_writer.writerow(["=numCandidateMutatedSites="])
