@@ -666,7 +666,7 @@ process PREPARE_DELSIEVE_INPUTS {
     """
     set -euo pipefail
 
-    # DelSIEVE data rows must contain alt1 alt2 alt3 coverage for each cell.
+    # DelSIEVE datatype 1 rows contain alt1 alt2 alt3 normal coverage for each cell.
     mkdir -p delsieve_prep
 
     python "${projectDir}/bin/prepare_delsieve_inputs.py" select-candidates \\
@@ -735,11 +735,15 @@ process DELSIEVE_DATA_COLLECTOR {
       exit 1
     fi
     cell_count=\$(awk '{print NF; exit}' "${delsieve_prep}/cell_names")
-    expected_columns=\$((cell_count * 4))
+    if [[ "${params.delsieve_datatype}" != "1" ]]; then
+      echo "CN-PUP currently writes DelSIEVE datatype 1 input; got delsieve_datatype=${params.delsieve_datatype}." >&2
+      exit 1
+    fi
+    expected_columns=\$((cell_count * 5))
     bad_columns=\$(awk -v expected="\$expected_columns" 'NF != expected { print NR ":" NF; exit }' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
     if [[ -n "\$bad_columns" ]]; then
       echo "DelSIEVE read-count matrix has the wrong number of columns at row \$bad_columns; expected \$expected_columns columns for \$cell_count cells." >&2
-      echo "Each cell must contribute exactly four DelSIEVE values: alt1 alt2 alt3 coverage." >&2
+      echo "Each cell must contribute exactly five DelSIEVE datatype 1 values: alt1 alt2 alt3 normal coverage." >&2
       exit 1
     fi
 

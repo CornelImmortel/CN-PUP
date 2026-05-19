@@ -206,10 +206,9 @@ def parse_mpileup(args):
                 base_counts = parse_bases(ref, bases)
                 alt_counts = sorted([base_counts[b] for b in "ACGT" if b != ref], reverse=True)
                 ref_count = base_counts[ref]
-                delsieve_block = [alt_counts[0], alt_counts[1], alt_counts[2], depth]
-                metadata_block = [alt_counts[0], alt_counts[1], alt_counts[2], ref_count, depth]
-                counts_row.extend(delsieve_block)
-                metadata_row.extend(metadata_block)
+                count_block = [alt_counts[0], alt_counts[1], alt_counts[2], ref_count, depth]
+                counts_row.extend(count_block)
+                metadata_row.extend(count_block)
                 readable_writer.writerow({
                     "var_id": site.get("var_id", f"{chrom}:{pos}"),
                     "chrom": chrom,
