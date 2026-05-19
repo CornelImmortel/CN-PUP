@@ -19,7 +19,7 @@ delsieve_applauncher: applauncher
 delsieve_beast: beast
 delsieve_treeannotator: applauncher
 delsieve_version_file: ""
-delsieve_template_stage1: /tzu-share-2/users/students/cornelusp/DelSIEVE/examples/templates/smc_mu_sa_stage_1.xml
+delsieve_template_stage1: /tzu-share-2/users/students/cornelusp/CN-PUP2/CN-PUP/configs/delsieve_smc_mu_sa_stage_1.fixed.xml
 delsieve_threads: 1
 delsieve_datatype: 1
 delsieve_missing_threshold: 1
