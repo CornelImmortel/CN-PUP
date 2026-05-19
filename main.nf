@@ -666,7 +666,7 @@ process PREPARE_DELSIEVE_INPUTS {
     """
     set -euo pipefail
 
-    # DelSIEVE datatype 1 rows contain alt1 alt2 alt3 normal coverage for each cell.
+    # DelSIEVE DataCollector consumes DataFilter-style sections, not a flat numeric matrix.
     mkdir -p delsieve_prep
 
     python "${projectDir}/bin/prepare_delsieve_inputs.py" select-candidates \\
@@ -694,7 +694,12 @@ process PREPARE_DELSIEVE_INPUTS {
         --output-dir "\$PWD/delsieve_prep"
     else
       touch "\$PWD/delsieve_prep/candidate_sites.mpileup"
-      printf "chrom\tpos\tref\tcandidate_alt\tvar_id\\n" > "\$PWD/delsieve_prep/read_counts.full_support_coverage.tsv"
+      {
+        printf "=numSamples=\\n0\\n"
+        printf "=numCandidateMutatedSites=\\n0\\n"
+        printf "=numBackgroundSites=\\n0\\n"
+        printf "=mutations=\\n=background=\\n"
+      } > "\$PWD/delsieve_prep/read_counts.full_support_coverage.tsv"
       printf "var_id\tchrom\tpos\tref\tcandidate_alt\tcell_id\tA\tC\tG\tT\talt1\talt2\talt3\tref_count\tcoverage\\n" > "\$PWD/delsieve_prep/read_counts.human_readable.tsv"
     fi
     """
@@ -739,11 +744,25 @@ process DELSIEVE_DATA_COLLECTOR {
       echo "CN-PUP currently writes DelSIEVE datatype 1 input; got delsieve_datatype=${params.delsieve_datatype}." >&2
       exit 1
     fi
-    expected_columns=\$((cell_count * 5))
-    bad_columns=\$(awk -v expected="\$expected_columns" 'NF != expected { print NR ":" NF; exit }' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
-    if [[ -n "\$bad_columns" ]]; then
-      echo "DelSIEVE read-count matrix has the wrong number of columns at row \$bad_columns; expected \$expected_columns columns for \$cell_count cells." >&2
-      echo "Each cell must contribute exactly five DelSIEVE datatype 1 values: alt1 alt2 alt3 normal coverage." >&2
+    for marker in '=numSamples=' '=numCandidateMutatedSites=' '=numBackgroundSites=' '=mutations=' '=background='; do
+      if ! grep -qx "\$marker" "${delsieve_prep}/read_counts.full_support_coverage.tsv"; then
+        echo "DelSIEVE data file is missing required DataFilter marker: \$marker" >&2
+        exit 1
+      fi
+    done
+    declared_cells=\$(awk 'prev == "=numSamples=" { print; exit } { prev=\$0 }' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
+    if [[ "\$declared_cells" -ne "\$cell_count" ]]; then
+      echo "DelSIEVE data declares \$declared_cells cells, but ${delsieve_prep}/cell_names contains \$cell_count cells." >&2
+      exit 1
+    fi
+    bad_mutation_row=\$(awk -v expected="\$((cell_count + 4))" '
+      \$0 == "=mutations=" { in_mut=1; next }
+      \$0 == "=background=" { in_mut=0 }
+      in_mut && NF != expected { print NR ":" NF; exit }
+    ' "${delsieve_prep}/read_counts.full_support_coverage.tsv")
+    if [[ -n "\$bad_mutation_row" ]]; then
+      echo "DelSIEVE mutation row has the wrong number of columns at row \$bad_mutation_row; expected \$((cell_count + 4))." >&2
+      echo "Rows must be: chrom pos ref alt followed by one 'alt1,alt2,alt3;count1,count2,count3,coverage' field per cell." >&2
       exit 1
     fi
 

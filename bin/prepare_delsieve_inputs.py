@@ -54,6 +54,10 @@ def select_candidates(args):
             var_id = row.get("var_id", "")
             if not var_id or sample_id not in ctc_ids:
                 continue
+            ref = row.get("ref", "").upper()
+            alt = row.get("alt", "").upper()
+            if len(ref) != 1 or len(alt) != 1 or ref not in "ACGT" or alt not in "ACGT" or ref == alt:
+                continue
             if allowed_callers is not None and caller not in allowed_callers:
                 continue
             total = to_float(row.get("total_depth") or row.get("DP"))
@@ -173,11 +177,10 @@ def parse_mpileup(args):
         for row in csv.DictReader(fh, delimiter="\t"):
             site_by_key[(row["chrom"], str(int(float(row["pos"]))))] = row
 
+    data_rows = []
     with open(args.mpileup, "r", encoding="utf-8") as pile, \
-            open(outdir / "read_counts.full_support_coverage.tsv", "w", encoding="utf-8", newline="") as counts_out, \
             open(outdir / "read_counts.full_support_coverage.with_metadata.tsv", "w", encoding="utf-8", newline="") as metadata_counts_out, \
             open(outdir / "read_counts.human_readable.tsv", "w", encoding="utf-8", newline="") as readable_out:
-        counts_writer = csv.writer(counts_out, delimiter="\t")
         metadata_counts_writer = csv.writer(metadata_counts_out, delimiter="\t")
         readable_cols = ["var_id", "chrom", "pos", "ref", "candidate_alt", "cell_id", "A", "C", "G", "T", "alt1", "alt2", "alt3", "ref_count", "coverage"]
         readable_writer = csv.DictWriter(readable_out, fieldnames=readable_cols, delimiter="\t")
@@ -193,7 +196,13 @@ def parse_mpileup(args):
             fields = line.rstrip("\n").split("\t")
             chrom, pos, ref = fields[0], fields[1], fields[2].upper()
             site = site_by_key.get((chrom, pos), {})
-            counts_row = []
+            candidate_alt = site.get("alt", "")
+            alt_bases = [candidate_alt.upper()] if candidate_alt else []
+            alt_bases.extend([base for base in "ACGT" if base != ref and base not in alt_bases])
+            alt_bases = alt_bases[:3]
+            if len(alt_bases) != 3:
+                raise ValueError(f"Could not build three alternative bases for {chrom}:{pos} {ref}>{candidate_alt}")
+            data_row = [chrom, pos, ref, candidate_alt]
             metadata_row = [chrom, pos, ref, site.get("alt", ""), site.get("var_id", f"{chrom}:{pos}")]
             sample_fields = fields[3:]
             for idx, cell in enumerate(cells):
@@ -204,10 +213,10 @@ def parse_mpileup(args):
                     depth = int(sample_fields[base_idx])
                     bases = sample_fields[base_idx + 1]
                 base_counts = parse_bases(ref, bases)
-                alt_counts = sorted([base_counts[b] for b in "ACGT" if b != ref], reverse=True)
+                alt_counts = [base_counts[base] for base in alt_bases]
                 ref_count = base_counts[ref]
                 count_block = [alt_counts[0], alt_counts[1], alt_counts[2], ref_count, depth]
-                counts_row.extend(count_block)
+                data_row.append(f"{','.join(alt_bases)};{alt_counts[0]},{alt_counts[1]},{alt_counts[2]},{depth}")
                 metadata_row.extend(count_block)
                 readable_writer.writerow({
                     "var_id": site.get("var_id", f"{chrom}:{pos}"),
@@ -226,8 +235,20 @@ def parse_mpileup(args):
                     "ref_count": ref_count,
                     "coverage": depth,
                 })
-            counts_writer.writerow(counts_row)
             metadata_counts_writer.writerow(metadata_row)
+            data_rows.append(data_row)
+
+    with open(outdir / "read_counts.full_support_coverage.tsv", "w", encoding="utf-8", newline="") as counts_out:
+        counts_writer = csv.writer(counts_out, delimiter="\t")
+        counts_writer.writerow(["=numSamples="])
+        counts_writer.writerow([len(cells)])
+        counts_writer.writerow(["=numCandidateMutatedSites="])
+        counts_writer.writerow([len(data_rows)])
+        counts_writer.writerow(["=numBackgroundSites="])
+        counts_writer.writerow([0])
+        counts_writer.writerow(["=mutations="])
+        counts_writer.writerows(data_rows)
+        counts_writer.writerow(["=background="])
 
 
 def main():
