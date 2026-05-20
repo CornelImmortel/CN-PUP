@@ -1,0 +1,28 @@
+patients: docs/tzu_run/patients.PAT-2026-03-00003.monovar.tsv
+outdir: results
+
+run_monovar: true
+run_external_callers: false
+run_sccaller: false
+run_comparison: true
+run_final_report: true
+run_vep_filter: false
+run_snv_report: false
+run_bam_qc: false
+enable_weblog: true
+weblog_url: http://localhost:8605
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_background_ctc_count: 5
+monovar_background_seed: 13
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+max_population_af: 0.001
+keep_cosmic: true
+
+final_report_top_variants: 200
+final_report_rarefaction_iterations: 200

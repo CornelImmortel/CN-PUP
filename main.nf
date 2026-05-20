@@ -13,6 +13,8 @@ params.outdir = params.outdir ?: "results"
 params.monovar_script = params.monovar_script ?: ""
 params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
+params.monovar_background_ctc_count = params.monovar_background_ctc_count ?: 5
+params.monovar_background_seed = params.monovar_background_seed ?: 13
 params.run_monovar = params.run_monovar ?: false
 params.run_sccaller = params.run_sccaller ?: false
 params.run_external_callers = params.run_external_callers ?: false
@@ -30,6 +32,9 @@ params.sccaller_mode = params.sccaller_mode ?: "external_bulk"
 params.sccaller_hsnp_vcf = params.sccaller_hsnp_vcf ?: ""
 params.run_vep_filter = params.run_vep_filter ?: false
 params.run_snv_report = params.run_snv_report == null ? true : params.run_snv_report
+params.run_final_report = params.run_final_report == null ? true : params.run_final_report
+params.final_report_top_variants = params.final_report_top_variants ?: 200
+params.final_report_rarefaction_iterations = params.final_report_rarefaction_iterations ?: 200
 params.run_bam_qc = params.run_bam_qc ?: false
 params.mosdepth_threads = params.mosdepth_threads ?: 2
 params.mosdepth_by = params.mosdepth_by ?: ""
@@ -74,6 +79,10 @@ def resolveInputPath(value) {
 def isLeukocyteCell(cellId) {
     def x = cellId.toString().toLowerCase()
     return x == 'leukocyte' || x == 'leuko' || x == 'wbc' || x.contains('leuk')
+}
+
+def isMonovarSubsetBackgroundMode(germlineMode) {
+    return germlineMode == 'monovar_wbc_subset'
 }
 
 
@@ -186,10 +195,36 @@ workflow {
 
         split_with_info_ch = split_monovar_vcfs_ch.combine(filter_info_ch, by: 0)
 
+        if (params.run_monovar) {
+            monovar_subset_bg_input_ch = checked_ch.filter { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check ->
+                isMonovarSubsetBackgroundMode(germline_mode)
+            }
+            PREPARE_MONOVAR_WBC_SUBSET(monovar_subset_bg_input_ch)
+            PREPARE_MONOVAR_WBC_SUBSET.out.view { "MonoVar WBC subset input for ${it[0]}: ${it[2]}" }
+
+            RUN_MONOVAR_WBC_SUBSET(PREPARE_MONOVAR_WBC_SUBSET.out)
+            RUN_MONOVAR_WBC_SUBSET.out.view { "MonoVar WBC subset VCF: ${it[1]}" }
+
+            SPLIT_MONOVAR_WBC_SUBSET(RUN_MONOVAR_WBC_SUBSET.out)
+            SPLIT_MONOVAR_WBC_SUBSET.out.view { "Split MonoVar WBC subset VCFs: ${it[1]}" }
+        }
+
         leukocyte_exclusion_input_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
             germline_mode == 'joint_monovar_leukocyte' && isLeukocyteCell(cell_id)
         }
-        PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION(leukocyte_exclusion_input_ch)
+        subset_leukocyte_exclusion_input_ch = SPLIT_MONOVAR_WBC_SUBSET.out
+            .flatMap { patient_id, split_vcfs, sample_map, split_log, ref_fasta ->
+                def files = split_vcfs instanceof List ? split_vcfs : [split_vcfs]
+                files.collect { split_vcf ->
+                    def cell_id = split_vcf.getBaseName().replaceFirst(/\.monovar\.split$/, '')
+                    tuple(patient_id, cell_id, split_vcf, ref_fasta, 'monovar_wbc_subset', 'NA')
+                }
+            }
+            .filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
+                isLeukocyteCell(cell_id)
+            }
+        leukocyte_exclusion_all_ch = leukocyte_exclusion_input_ch.mix(subset_leukocyte_exclusion_input_ch)
+        PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION(leukocyte_exclusion_all_ch)
         PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out.view { "MonoVar leukocyte exclusion VCF: ${it[1]}" }
 
         exclusion_ch = PREPARE_PRECOMPUTED_GERMLINE.out.mix(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out)
@@ -201,6 +236,24 @@ workflow {
         monovar_background_ch = target_split_ch.combine(exclusion_ch, by: 0)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE(monovar_background_ch)
         FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out.view { "Comparable MonoVar VCF: ${it[3]}" }
+        monovar_split_by_patient_ch = SPLIT_MONOVAR.out
+            .map { patient_id, split_vcfs, sample_map, split_log -> tuple(patient_id, split_vcfs) }
+        monovar_norm_by_patient_ch = FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out
+            .map { patient_id, cell_id, norm_vcf, comparable_vcf, log_file -> tuple(patient_id, norm_vcf) }
+            .groupTuple(by: 0)
+        monovar_comparable_by_patient_ch = FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out
+            .map { patient_id, cell_id, norm_vcf, comparable_vcf, log_file -> tuple(patient_id, comparable_vcf) }
+            .groupTuple(by: 0)
+        monovar_exclusion_by_patient_ch = PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out
+            .map { patient_id, exclusion_vcf, exclusion_tbi, ref_fasta, exclusion_source -> tuple(patient_id, exclusion_vcf) }
+            .groupTuple(by: 0)
+        monovar_flowchart_input_ch = monovar_split_by_patient_ch
+            .combine(monovar_norm_by_patient_ch, by: 0)
+            .combine(monovar_comparable_by_patient_ch, by: 0)
+            .combine(monovar_exclusion_by_patient_ch, by: 0)
+        MONOVAR_VARIANT_FLOWCHARTS(monovar_flowchart_input_ch)
+        MONOVAR_VARIANT_FLOWCHARTS.out.view { "MonoVar variant flowcharts: ${it[1]}" }
+
         monovar_comparison_ch = FILTER_MONOVAR_AND_SUBTRACT_GERMLINE.out
             .map { patient_id, cell_id, norm_vcf, comparable_vcf, log_file -> tuple(patient_id, comparable_vcf) }
             .groupTuple(by: 0)
@@ -300,6 +353,29 @@ workflow {
             .groupTuple(by: 0)
         BUILD_CALLER_COMPARISON(comparison_by_patient_ch)
         BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
+
+        if (params.run_final_report) {
+            final_report_base_ch = BUILD_CALLER_COMPARISON.out
+                .join(checked_info_ch, by: 0)
+            if (params.run_bam_qc) {
+                final_report_samtools_ch = SAMTOOLS_STATS.out
+                    .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
+                    .groupTuple(by: 0)
+                final_report_mosdepth_ch = MOSDEPTH_QC.out
+                    .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
+                    .groupTuple(by: 0)
+                final_report_with_qc_ch = final_report_base_ch
+                    .combine(final_report_samtools_ch, by: 0)
+                    .combine(final_report_mosdepth_ch, by: 0)
+                BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC(final_report_with_qc_ch)
+                final_report_data_ch = BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC.out
+            } else {
+                BUILD_FINAL_REPORT_DATA(final_report_base_ch)
+                final_report_data_ch = BUILD_FINAL_REPORT_DATA.out
+            }
+            CN_PUP_FINAL_REPORT(final_report_data_ch)
+            CN_PUP_FINAL_REPORT.out.view { "CN-PUP final report: ${it[1]}" }
+        }
 
         if (params.run_delsieve_prep || params.run_delsieve) {
             delsieve_patient_info_ch = checked_info_ch.map { patient_id, ref_fasta, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_vcf ->
@@ -651,6 +727,86 @@ process BUILD_CALLER_COMPARISON {
     """
 }
 
+process BUILD_FINAL_REPORT_DATA {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/final_report/data" }, mode: 'copy', pattern: "final_report_data/*"
+
+    input:
+    tuple val(patient_id), path(long_table), path(matrices), path(ctc_scite_inputs), path(overlap_qc), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf)
+
+    output:
+    tuple val(patient_id), path("final_report_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p final_report_data final_report_matrices
+    cp ${matrices} final_report_matrices/
+
+    python "${projectDir}/bin/build_final_report_data.py" \
+      --patient-id "${patient_id}" \
+      --long-table "${long_table}" \
+      --matrices-dir "\$PWD/final_report_matrices" \
+      --cell-metadata "${cell_metadata}" \
+      --output-dir "\$PWD/final_report_data" \
+      --top-variant-limit "${params.final_report_top_variants}" \
+      --rarefaction-iterations "${params.final_report_rarefaction_iterations}"
+    """
+}
+
+process BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/final_report/data" }, mode: 'copy', pattern: "final_report_data/*"
+
+    input:
+    tuple val(patient_id), path(long_table), path(matrices), path(ctc_scite_inputs), path(overlap_qc), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf), path(samtools_stats_files), path(mosdepth_files)
+
+    output:
+    tuple val(patient_id), path("final_report_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p final_report_data final_report_matrices final_alignment_qc
+    cp ${matrices} final_report_matrices/
+    cp ${samtools_stats_files} final_alignment_qc/
+    cp ${mosdepth_files} final_alignment_qc/
+
+    python "${projectDir}/bin/build_final_report_data.py" \
+      --patient-id "${patient_id}" \
+      --long-table "${long_table}" \
+      --matrices-dir "\$PWD/final_report_matrices" \
+      --cell-metadata "${cell_metadata}" \
+      --alignment-qc-dir "\$PWD/final_alignment_qc" \
+      --output-dir "\$PWD/final_report_data" \
+      --top-variant-limit "${params.final_report_top_variants}" \
+      --rarefaction-iterations "${params.final_report_rarefaction_iterations}"
+    """
+}
+
+process CN_PUP_FINAL_REPORT {
+    tag "$patient_id"
+    conda "envs/snv_report.yml"
+    publishDir { "${params.outdir}/${patient_id}/final_report" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(report_data)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.cnpup_final_report.html")
+
+    script:
+    """
+    set -euo pipefail
+
+    Rscript -e 'rmarkdown::render("${projectDir}/assets/cnpup_final_report.Rmd", output_file="${patient_id}.cnpup_final_report.html", output_dir=".", params=list(patient_id="${patient_id}", data_dir="${report_data}", out_prefix="${patient_id}.cnpup_final"))'
+    """
+}
+
 process PREPARE_DELSIEVE_INPUTS {
     tag "$patient_id"
     conda "envs/delsieve_prep.yml"
@@ -969,6 +1125,9 @@ process CHECK_INPUTS {
       joint_monovar_leukocyte)
         test -s "${leukocyte_bam}" || { echo "ERROR: leukocyte_bam not found: ${leukocyte_bam}" >&2; exit 1; }
         ;;
+      monovar_wbc_subset)
+        test -s "${leukocyte_bam}" || { echo "ERROR: leukocyte_bam not found: ${leukocyte_bam}" >&2; exit 1; }
+        ;;
       combined)
         test -s "${germline_vcf}" || { echo "ERROR: germline_vcf not found for combined mode: ${germline_vcf}" >&2; exit 1; }
         test -s "${leukocyte_bam}" || test -s "${leukocyte_vcf}" || { echo "ERROR: combined mode requires leukocyte_bam or leukocyte_vcf" >&2; exit 1; }
@@ -978,7 +1137,7 @@ process CHECK_INPUTS {
         ;;
       *)
         echo "ERROR: unsupported germline_mode '${germline_mode}'" >&2
-        echo "Allowed: precomputed_vcf, deepvariant_bulk_bam, leukocyte_vcf, joint_monovar_leukocyte, combined, no_germline" >&2
+        echo "Allowed: precomputed_vcf, deepvariant_bulk_bam, leukocyte_vcf, joint_monovar_leukocyte, monovar_wbc_subset, combined, no_germline" >&2
         exit 1
         ;;
     esac
@@ -997,6 +1156,161 @@ process CHECK_INPUTS {
     fi
 
     echo "status\tOK" >> "\$report"
+    """
+}
+
+process PREPARE_MONOVAR_WBC_SUBSET {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/monovar_wbc_subset/config" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), val(ref_fasta), val(monovar_bam_list), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(input_check)
+
+    output:
+    tuple val(patient_id), val(ref_fasta), path("${patient_id}.monovar_wbc_subset_bams.txt"), path("${patient_id}.monovar_wbc_subset_cells.tsv"), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path("${patient_id}.monovar_wbc_subset_selection.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    python - <<'PY'
+import csv
+import random
+from pathlib import Path
+
+patient_id = "${patient_id}"
+cell_metadata = Path("${cell_metadata}")
+leukocyte_bam = "${leukocyte_bam}"
+ctc_count = int("${params.monovar_background_ctc_count}")
+seed = "${params.monovar_background_seed}"
+
+with cell_metadata.open(newline="") as handle:
+    rows = [row for row in csv.DictReader(handle, delimiter="\\t") if row.get("patient_id") == patient_id]
+
+def is_wbc(row):
+    cell_id = row.get("cell_id", "").lower()
+    cell_type = row.get("cell_type", "").lower()
+    return cell_id in {"wbc", "leukocyte", "leuko"} or "leuk" in cell_id or cell_type in {"wbc", "leukocyte", "leuko"} or "leuk" in cell_type
+
+ctcs = [row for row in rows if not is_wbc(row)]
+wbcs = [row for row in rows if is_wbc(row)]
+if leukocyte_bam and leukocyte_bam != "NA":
+    matching = [row for row in wbcs if row.get("bam_path") == leukocyte_bam]
+    if matching:
+        wbcs = matching
+if not wbcs:
+    raise SystemExit("No WBC/leukocyte row found in cell_metadata for monovar_wbc_subset mode")
+if not ctcs:
+    raise SystemExit("No CTC rows found in cell_metadata for monovar_wbc_subset mode")
+
+rng = random.Random(f"{seed}:{patient_id}")
+selected_ctcs = sorted(rng.sample(ctcs, min(ctc_count, len(ctcs))), key=lambda row: rows.index(row))
+selected = selected_ctcs + [wbcs[0]]
+
+with open(f"{patient_id}.monovar_wbc_subset_bams.txt", "w", newline="") as out:
+    for row in selected:
+        out.write(row["bam_path"] + "\\n")
+
+fieldnames = ["patient_id", "cell_id", "bam_path", "cell_type"]
+with open(f"{patient_id}.monovar_wbc_subset_cells.tsv", "w", newline="") as out:
+    writer = csv.DictWriter(out, delimiter="\\t", fieldnames=fieldnames, lineterminator="\\n")
+    writer.writeheader()
+    for row in selected:
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+with open(f"{patient_id}.monovar_wbc_subset_selection.tsv", "w", newline="") as out:
+    writer = csv.DictWriter(out, delimiter="\\t", fieldnames=fieldnames + ["selection_role"], lineterminator="\\n")
+    writer.writeheader()
+    for row in selected_ctcs:
+        payload = {key: row.get(key, "") for key in fieldnames}
+        payload["selection_role"] = "random_ctc_background_context"
+        writer.writerow(payload)
+    payload = {key: wbcs[0].get(key, "") for key in fieldnames}
+    payload["selection_role"] = "wbc_background"
+    writer.writerow(payload)
+PY
+    """
+}
+
+process RUN_MONOVAR_WBC_SUBSET {
+    tag "$patient_id"
+    cpus params.monovar_threads
+    conda "envs/monovar_py2.yml"
+    publishDir { "${params.outdir}/${patient_id}/raw_calls/monovar_wbc_subset" }, mode: 'copy', pattern: "*.vcf"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.log"
+
+    input:
+    tuple val(patient_id), val(ref_fasta), path(monovar_bam_list), path(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_bam), val(leukocyte_vcf), path(selection_tsv)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.monovar_wbc_subset.vcf"), path(cell_metadata), val(ref_fasta), path("${patient_id}.monovar_wbc_subset.log")
+
+    script:
+    """
+    set -euo pipefail
+
+    test -s "${params.monovar_script}" || { echo "ERROR: monovar_script not found: ${params.monovar_script}" >&2; exit 1; }
+    test -s "${ref_fasta}" || { echo "ERROR: ref_fasta not found: ${ref_fasta}" >&2; exit 1; }
+    command -v samtools >/dev/null 2>&1 || { echo "ERROR: samtools not found in PATH" >&2; exit 1; }
+    python --version > "${patient_id}.monovar_wbc_subset.log" 2>&1 || true
+    samtools --version | head -n 2 >> "${patient_id}.monovar_wbc_subset.log" 2>&1 || true
+    echo "Starting MonoVar WBC subset background run for ${patient_id}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "BAM list: ${monovar_bam_list}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "Selection TSV: ${selection_tsv}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "Reference: ${ref_fasta}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "MonoVar: ${params.monovar_script}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "Region: ${params.monovar_region}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo >> "${patient_id}.monovar_wbc_subset.log"
+
+    region_args=()
+    if [[ -n "${params.monovar_region}" ]]; then
+      region_args=(-r "${params.monovar_region}")
+    fi
+
+    samtools mpileup \
+      -BQ0 \
+      -d10000 \
+      -f "${ref_fasta}" \
+      -q 40 \
+      -b "${monovar_bam_list}" \
+      "\${region_args[@]}" \
+    | python "${params.monovar_script}" \
+      -p 0.002 \
+      -a 0.2 \
+      -t 0.05 \
+      -m ${params.monovar_threads} \
+      -f "${ref_fasta}" \
+      -b "${monovar_bam_list}" \
+      -o "${patient_id}.monovar_wbc_subset.vcf" \
+    >> "${patient_id}.monovar_wbc_subset.log" 2>&1
+    """
+}
+
+process SPLIT_MONOVAR_WBC_SUBSET {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/split_calls/monovar_wbc_subset" }, mode: 'copy', pattern: "*.monovar.split.vcf"
+    publishDir { "${params.outdir}/${patient_id}/split_calls/monovar_wbc_subset" }, mode: 'copy', pattern: "*.split_sample_map.tsv"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.split.log"
+
+    input:
+    tuple val(patient_id), path(monovar_vcf), path(cell_metadata), val(ref_fasta), path(monovar_log)
+
+    output:
+    tuple val(patient_id), path("*.monovar.split.vcf"), path("${patient_id}.monovar_wbc_subset.split_sample_map.tsv"), path("${patient_id}.monovar_wbc_subset.split.log"), val(ref_fasta)
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/split_monovar_vcf.py" \
+      --input "${monovar_vcf}" \
+      --cell-metadata "${cell_metadata}" \
+      --patient-id "${patient_id}" \
+      --outdir . \
+    > "${patient_id}.monovar_wbc_subset.split.log" 2>&1
+    mv "${patient_id}.monovar.split_sample_map.tsv" "${patient_id}.monovar_wbc_subset.split_sample_map.tsv"
     """
 }
 
@@ -1257,6 +1571,69 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
 
     echo -n "Comparable variants after background subtraction: " >> "\$log"
     bcftools view -H "\$comparable" | wc -l >> "\$log"
+    """
+}
+
+process MONOVAR_VARIANT_FLOWCHARTS {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports/variant_flowcharts" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(split_vcfs), path(norm_vcfs), path(comparable_vcfs), path(exclusion_vcfs)
+
+    output:
+    tuple val(patient_id), path("variant_flowcharts")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p flow_project/config flow_project/bulk_exclusion flow_project/normalized_calls/monovar flow_project/comparable_calls/monovar variant_flowcharts
+
+    samples_tsv="\$PWD/flow_project/config/samples.tsv"
+    printf "sample_id\tcaller\traw_vcf\tsccaller_mode\n" > "\$samples_tsv"
+
+    for raw_vcf in ${split_vcfs}; do
+      cell_id=\$(basename "\$raw_vcf" .monovar.split.vcf)
+      case "\$(echo "\$cell_id" | tr '[:upper:]' '[:lower:]')" in
+        wbc|leukocyte|leuko|*leuk*) continue ;;
+      esac
+      printf "%s\tmonovar\t%s\t\n" "\$cell_id" "\$raw_vcf" >> "\$samples_tsv"
+    done
+
+    for norm_vcf in ${norm_vcfs}; do
+      cell_id=\$(basename "\$norm_vcf" .monovar.filtered.norm.vcf.gz)
+      cp "\$norm_vcf" "flow_project/normalized_calls/monovar/\${cell_id}.monovar.filtered.snvs.norm.vcf.gz"
+      if [[ -f "\${norm_vcf}.tbi" ]]; then
+        cp "\${norm_vcf}.tbi" "flow_project/normalized_calls/monovar/\${cell_id}.monovar.filtered.snvs.norm.vcf.gz.tbi"
+      fi
+    done
+
+    for comparable_vcf in ${comparable_vcfs}; do
+      cell_id=\$(basename "\$comparable_vcf" | sed -E 's/\\.monovar\\.no_.+\\.vcf\\.gz\$//')
+      cp "\$comparable_vcf" "flow_project/comparable_calls/monovar/\${cell_id}.monovar.comparable.vcf.gz"
+      if [[ -f "\${comparable_vcf}.tbi" ]]; then
+        cp "\${comparable_vcf}.tbi" "flow_project/comparable_calls/monovar/\${cell_id}.monovar.comparable.vcf.gz.tbi"
+      fi
+    done
+
+    first_exclusion=""
+    for exclusion_vcf in ${exclusion_vcfs}; do
+      first_exclusion="\$exclusion_vcf"
+      break
+    done
+    if [[ -n "\$first_exclusion" ]]; then
+      cp "\$first_exclusion" "flow_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz"
+      if [[ -f "\${first_exclusion}.tbi" ]]; then
+        cp "\${first_exclusion}.tbi" "flow_project/bulk_exclusion/${patient_id}.leukocyte.norm.vcf.gz.tbi"
+      fi
+    fi
+
+    python "${projectDir}/bin/mutation_matrix/07_variant_flowcharts.py" \
+      --project "\$PWD/flow_project" \
+      --samples-tsv "\$samples_tsv" \
+      --output-dir "\$PWD/variant_flowcharts"
     """
 }
 

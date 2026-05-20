@@ -1,0 +1,266 @@
+---
+title: "CN-PUP Final Patient Report"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+    theme: null
+    self_contained: true
+params:
+  patient_id: "patient"
+  data_dir: "."
+  out_prefix: "patient"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+suppressPackageStartupMessages({
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(DT)
+  library(htmltools)
+})
+
+data_dir <- params$data_dir
+read_optional <- function(name) {
+  path <- file.path(data_dir, name)
+  if (!file.exists(path) || file.info(path)$size == 0) {
+    return(tibble())
+  }
+  suppressMessages(read_tsv(path, show_col_types = FALSE, col_types = cols(.default = "c")))
+}
+patient_summary <- read_optional("patient_summary.tsv")
+ctc_qc <- read_optional("ctc_qc_summary.tsv")
+sharing <- read_optional("sharing_spectrum.tsv")
+top_variants <- read_optional("top_recurrent_variants.tsv")
+tissue_overlap <- read_optional("ctc_tissue_overlap.tsv")
+rarefaction <- read_optional("rarefaction.tsv")
+warnings_tbl <- read_optional("warnings.tsv")
+
+metric_value <- function(metric, default = "NA") {
+  if (!nrow(patient_summary) || !metric %in% patient_summary$metric) return(default)
+  patient_summary$value[match(metric, patient_summary$metric)]
+}
+num_metric <- function(metric) suppressWarnings(as.numeric(metric_value(metric, NA)))
+status_counts <- if (nrow(ctc_qc)) count(ctc_qc, qc_status, name = "n") else tibble(qc_status = character(), n = integer())
+```
+
+<style>
+body { font-family: Arial, Helvetica, sans-serif; color: #202124; line-height: 1.38; }
+h1, h2, h3 { color: #1f2933; letter-spacing: 0; }
+h1 { border-bottom: 4px solid #f28c28; padding-bottom: 10px; }
+h2 { border-bottom: 1px solid #d9dee5; padding-bottom: 6px; margin-top: 34px; }
+#TOC { border: 1px solid #d9dee5; background: #fafafa; padding: 10px 14px; margin: 14px 0 22px; }
+#TOC ul { list-style: none; padding-left: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+#TOC li { margin: 0; }
+#TOC a { display: inline-block; text-decoration: none; color: #1f4e79; border: 1px solid #d9dee5; background: white; border-radius: 4px; padding: 5px 8px; font-size: 13px; }
+#TOC a:hover { border-color: #f28c28; color: #9a4d00; }
+.report-header { display: grid; grid-template-columns: 1.3fr .7fr; gap: 18px; align-items: stretch; margin: 14px 0 18px; }
+.summary-panel { border-left: 7px solid #f28c28; background: #fff7ed; padding: 14px 18px; }
+.summary-panel h2 { border: 0; margin: 0 0 8px; padding: 0; }
+.meta-panel { border: 1px solid #d9dee5; padding: 14px 18px; background: #fafafa; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; margin: 14px 0 24px; }
+.metric-card { border: 1px solid #d9dee5; border-radius: 6px; padding: 10px 12px; background: white; min-height: 72px; }
+.metric-card .label { color: #5f6b7a; font-size: 12px; text-transform: uppercase; }
+.metric-card .value { color: #111827; font-size: 24px; font-weight: 700; margin-top: 4px; word-break: break-word; }
+.callout { border-left: 5px solid #5f6b7a; background: #f7f8fa; padding: 10px 14px; margin: 12px 0; }
+.warn { border-left-color: #d97706; background: #fff7ed; }
+.ctc-page { border-top: 2px solid #d9dee5; margin-top: 28px; padding-top: 16px; page-break-before: always; }
+.ctc-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; }
+.badge { display: inline-block; border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: 12px; }
+.PASS { background: #dcfce7; color: #166534; }
+.WARN { background: #ffedd5; color: #9a3412; }
+.FAIL { background: #fee2e2; color: #991b1b; }
+.UNKNOWN { background: #e5e7eb; color: #374151; }
+@media (max-width: 900px) {
+  .report-header, .metric-grid, .ctc-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 620px) {
+  .report-header, .metric-grid, .ctc-grid { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="report-header">
+<div class="summary-panel">
+<h2>`r params$patient_id`</h2>
+<p><strong>CN-PUP final patient report</strong> combining technical QC with thesis-facing CTC clonality and representativity summaries.</p>
+</div>
+<div class="meta-panel">
+<p><strong>Callers:</strong> `r metric_value("callers")`</p>
+<p><strong>Coverage source:</strong> `r metric_value("coverage_source")`</p>
+<p><strong>Generated:</strong> `r format(Sys.time(), "%Y-%m-%d %H:%M")`</p>
+</div>
+</div>
+
+```{r warning-callouts, results='asis'}
+if (nrow(warnings_tbl)) {
+  for (i in seq_len(nrow(warnings_tbl))) {
+    cat('<div class="callout warn"><strong>', htmlEscape(warnings_tbl$level[i]), ':</strong> ',
+        htmlEscape(warnings_tbl$message[i]), '</div>\n', sep = "")
+  }
+}
+```
+
+## Executive Summary
+
+<div class="metric-grid">
+<div class="metric-card"><div class="label">CTCs</div><div class="value">`r metric_value("ctc_count")`</div></div>
+<div class="metric-card"><div class="label">Tissue Samples</div><div class="value">`r metric_value("tissue_sample_count")`</div></div>
+<div class="metric-card"><div class="label">Unique Variants</div><div class="value">`r metric_value("unique_variants_all_samples")`</div></div>
+<div class="metric-card"><div class="label">Recurrent CTC Variants</div><div class="value">`r metric_value("ctc_variants_with_support_ge2")`</div></div>
+<div class="metric-card"><div class="label">Callers</div><div class="value">`r metric_value("caller_count")`</div></div>
+<div class="metric-card"><div class="label">Variant Rows</div><div class="value">`r metric_value("retained_variant_rows")`</div></div>
+<div class="metric-card"><div class="label">Max CTC Support</div><div class="value">`r metric_value("max_ctc_support_for_one_variant")`</div></div>
+<div class="metric-card"><div class="label">Metastasis Samples</div><div class="value">`r metric_value("metastasis_sample_count")`</div></div>
+</div>
+
+This report is designed to answer two things at once: whether the sequencing/calling data are technically usable per CTC, and what the retained SNVs say about CTC representativity, heterogeneity, and sampling depth.
+
+## QC Overview
+
+```{r qc-status}
+if (nrow(status_counts)) {
+  ggplot(status_counts, aes(x = qc_status, y = n, fill = qc_status)) +
+    geom_col(width = 0.65) +
+    scale_fill_manual(values = c(PASS = "#22c55e", WARN = "#f97316", FAIL = "#ef4444", UNKNOWN = "#9ca3af"), drop = FALSE) +
+    labs(x = "QC status", y = "CTC count", title = "Per-CTC QC status") +
+    theme_minimal(base_size = 12) +
+    theme(legend.position = "none")
+}
+```
+
+```{r ctc-depth}
+if (nrow(ctc_qc) && "mean_bam_coverage" %in% names(ctc_qc) && any(nzchar(ctc_qc$mean_bam_coverage))) {
+  depth_df <- ctc_qc %>% mutate(mean_bam_coverage = suppressWarnings(as.numeric(mean_bam_coverage)))
+  ggplot(depth_df, aes(x = reorder(cell_id, mean_bam_coverage), y = mean_bam_coverage, fill = qc_status)) +
+    geom_col(width = 0.75) +
+    coord_flip() +
+    scale_fill_manual(values = c(PASS = "#22c55e", WARN = "#f97316", FAIL = "#ef4444", UNKNOWN = "#9ca3af"), drop = FALSE) +
+    labs(x = "CTC", y = "Mean BAM coverage", title = "BAM coverage per CTC") +
+    theme_minimal(base_size = 12)
+} else if (nrow(ctc_qc) && "median_variant_site_depth" %in% names(ctc_qc)) {
+  depth_df <- ctc_qc %>% mutate(median_variant_site_depth = suppressWarnings(as.numeric(median_variant_site_depth)))
+  ggplot(depth_df, aes(x = reorder(cell_id, median_variant_site_depth), y = median_variant_site_depth, fill = qc_status)) +
+    geom_col(width = 0.75) +
+    coord_flip() +
+    scale_fill_manual(values = c(PASS = "#22c55e", WARN = "#f97316", FAIL = "#ef4444", UNKNOWN = "#9ca3af"), drop = FALSE) +
+    labs(x = "CTC", y = "Median depth at retained variant sites", title = "Variant-site coverage per CTC") +
+    theme_minimal(base_size = 12)
+}
+```
+
+```{r ctc-qc-table}
+if (nrow(ctc_qc)) {
+  datatable(ctc_qc, rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))
+}
+```
+
+## Research Q1: CTC Tissue Representativity
+
+The main question here is whether retained CTC SNVs overlap with matched primary or metastatic tissue calls. When no tissue calls are present in the comparison table, this section is intentionally marked as not answerable for this run.
+
+```{r tissue-overlap}
+if (nrow(tissue_overlap)) {
+  plot_df <- tissue_overlap %>%
+    mutate(ctc_fraction_shared_with_tissue = suppressWarnings(as.numeric(ctc_fraction_shared_with_tissue)))
+  ggplot(plot_df, aes(x = reorder(cell_id, ctc_fraction_shared_with_tissue), y = ctc_fraction_shared_with_tissue)) +
+    geom_col(fill = "#2563eb", width = 0.75) +
+    coord_flip() +
+    scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+    labs(x = "CTC", y = "Fraction of CTC variants shared with tissue", title = "CTC overlap with tissue union") +
+    theme_minimal(base_size = 12)
+  datatable(tissue_overlap, rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE))
+} else {
+  cat('<div class="callout">No tissue sample calls were detected, so primary/metastasis representativity cannot be quantified for this run.</div>')
+}
+```
+
+## Research Q2: CTC Heterogeneity
+
+Shared variants across CTCs give support for candidate subclonal structure. Private variants require more caution because they may reflect real heterogeneity, allelic dropout, WGA artifacts, or caller-specific noise.
+
+```{r sharing-spectrum}
+if (nrow(sharing)) {
+  sharing_plot <- sharing %>%
+    mutate(ctc_support_count = suppressWarnings(as.numeric(ctc_support_count)),
+           variant_count = suppressWarnings(as.numeric(variant_count)))
+  ggplot(sharing_plot, aes(x = ctc_support_count, y = variant_count)) +
+    geom_col(fill = "#f28c28", width = 0.75) +
+    scale_x_continuous(breaks = sort(unique(sharing_plot$ctc_support_count))) +
+    labs(x = "Number of CTCs carrying variant", y = "Variant count", title = "CTC sharing spectrum") +
+    theme_minimal(base_size = 12)
+}
+```
+
+```{r top-recurrent}
+if (nrow(top_variants)) {
+  datatable(top_variants, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+}
+```
+
+## Research Q3: Longitudinal Evolution
+
+<div class="callout">Longitudinal interpretation needs explicit timepoint metadata. This report version records the section but does not infer timepoints from sample names.</div>
+
+## Research Q4: Number of CTCs Sequenced
+
+Rarefaction estimates how much SNV information is recovered as more CTCs are sampled from this patient.
+
+```{r rarefaction-plot}
+if (nrow(rarefaction)) {
+  rare_df <- rarefaction %>%
+    mutate(n_ctc = suppressWarnings(as.numeric(n_ctc)),
+           mean_variants_observed = suppressWarnings(as.numeric(mean_variants_observed)),
+           mean_recurrent_variants_observed = suppressWarnings(as.numeric(mean_recurrent_variants_observed))) %>%
+    pivot_longer(c(mean_variants_observed, mean_recurrent_variants_observed), names_to = "metric", values_to = "value")
+  ggplot(rare_df, aes(x = n_ctc, y = value, color = metric)) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    scale_color_manual(values = c(mean_variants_observed = "#2563eb", mean_recurrent_variants_observed = "#f28c28"),
+                       labels = c(mean_variants_observed = "Any observed CTC variant", mean_recurrent_variants_observed = "Observed in >=2 sampled CTCs")) +
+    labs(x = "Number of CTCs sampled", y = "Mean variant count", color = NULL, title = "CTC sampling rarefaction") +
+    theme_minimal(base_size = 12)
+}
+```
+
+## Per-CTC Pages
+
+```{r per-ctc-pages, results='asis'}
+if (nrow(ctc_qc)) {
+  for (i in seq_len(nrow(ctc_qc))) {
+    cell <- ctc_qc$cell_id[i]
+    status <- ctc_qc$qc_status[i]
+    badge_class <- ifelse(status %in% c("PASS", "WARN", "FAIL", "UNKNOWN"), status, "UNKNOWN")
+    cat('<div class="ctc-page">\n')
+    cat('<h3>', htmlEscape(cell), ' <span class="badge ', badge_class, '">', htmlEscape(status), '</span></h3>\n', sep = "")
+    cat('<div class="ctc-grid">\n')
+    for (field in c("mean_bam_coverage", "mapped_fraction", "variant_count", "recurrent_variant_count", "private_variant_count", "median_variant_site_depth", "median_variant_site_vaf")) {
+      label <- str_replace_all(field, "_", " ")
+      value <- ctc_qc[[field]][i]
+      cat('<div class="metric-card"><div class="label">', htmlEscape(label), '</div><div class="value">', htmlEscape(value), '</div></div>\n', sep = "")
+    }
+    cat('</div>\n')
+    if (!is.na(ctc_qc$qc_warnings[i]) && nzchar(ctc_qc$qc_warnings[i])) {
+      cat('<div class="callout warn">', htmlEscape(ctc_qc$qc_warnings[i]), '</div>\n', sep = "")
+    }
+    if (!is.na(ctc_qc$bam_path[i]) && nzchar(ctc_qc$bam_path[i])) {
+      cat('<p><strong>BAM:</strong> ', htmlEscape(ctc_qc$bam_path[i]), '</p>\n', sep = "")
+    }
+    cat('</div>\n')
+  }
+}
+```
+
+## Methods and Provenance
+
+The final report is generated from the merged caller comparison table and the mutation matrices created by CN-PUP. `r if (str_detect(metric_value("coverage_source"), "bam_mosdepth")) "This run includes BAM-level samtools/mosdepth QC alongside variant-site depth from caller outputs." else "Per-CTC coverage currently uses median depth at retained variant sites from caller outputs; genome-wide or target-wide mosdepth coverage should be added with --run_bam_qc true when available."`
+
+```{r summary-table}
+if (nrow(patient_summary)) {
+  datatable(patient_summary, rownames = FALSE, options = list(pageLength = 20, dom = "tip"))
+}
+```
