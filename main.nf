@@ -861,6 +861,10 @@ process RUN_DELSIEVE_STAGE1 {
       "${stage1_xml}" \\
       > "\$PWD/delsieve_stage1_run/${patient_id}.beast.log" 2>&1
 
+    find "\$PWD" -maxdepth 1 -type f \\( -name "*.trees" -o -name "*.tree" -o -name "*.log" \\) \\
+      ! -name ".command.*" \\
+      -exec cp -n {} "\$PWD/delsieve_stage1_run/" \\;
+
     cp "${stage1_xml}" "\$PWD/delsieve_stage1_run/${patient_id}.stage1.xml"
     cp "${datacollector_log}" "\$PWD/delsieve_stage1_run/${patient_id}.datacollector.log"
     """

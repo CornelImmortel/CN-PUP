@@ -15,9 +15,9 @@ delsieve_min_ctc_support: 2
 delsieve_callers: all
 delsieve_min_base_quality: 0
 delsieve_min_mapping_quality: 0
-delsieve_applauncher: applauncher
-delsieve_beast: beast
-delsieve_treeannotator: applauncher
+delsieve_applauncher: /tzu-share-2/users/students/cornelusp/beast/bin/applauncher
+delsieve_beast: /tzu-share-2/users/students/cornelusp/beast/bin/beast
+delsieve_treeannotator: /tzu-share-2/users/students/cornelusp/beast/bin/applauncher
 delsieve_version_file: ""
 delsieve_template_stage1: /tzu-share-2/users/students/cornelusp/CN-PUP2/CN-PUP/configs/delsieve_smc_mu_sa_stage_1.fixed.xml
 delsieve_threads: 8
