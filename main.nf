@@ -1124,10 +1124,10 @@ process DELSIEVE_TREE_PNG_STAGE1 {
 
     mkdir -p delsieve_stage1_tree_png
 
-    tree_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.mcc.tree" | head -n 1)
+    tree_file=\$(find -L . -maxdepth 4 -type f -name "${patient_id}.stage1.mcc.tree" | head -n 1)
     if [[ -z "\$tree_file" ]]; then
       echo "No DelSIEVE MCC tree found for PNG rendering" >&2
-      find . -maxdepth 3 -type f -print >&2
+      find -L . -maxdepth 4 -type f -print >&2
       exit 1
     fi
 
@@ -1161,10 +1161,10 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
 
     mkdir -p delsieve_stage1_variants
 
-    mcc_tree=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.mcc.tree" | head -n 1)
+    mcc_tree=\$(find -L . -maxdepth 4 -type f -name "${patient_id}.stage1.mcc.tree" | head -n 1)
     if [[ -z "\$mcc_tree" ]]; then
       echo "No DelSIEVE MCC tree found for ${patient_id}" >&2
-      find . -maxdepth 3 -type f -print >&2
+      find -L . -maxdepth 4 -type f -print >&2
       exit 1
     fi
 
@@ -1175,10 +1175,10 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
       exit 1
     fi
 
-    stage1_xml_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.xml" | head -n 1)
+    stage1_xml_file=\$(find -L . -maxdepth 4 -type f -name "${patient_id}.stage1.xml" | head -n 1)
     if [[ -z "\$stage1_xml_file" ]]; then
       echo "No DelSIEVE stage 1 XML found for ${patient_id}" >&2
-      find . -maxdepth 3 -type f -print >&2
+      find -L . -maxdepth 4 -type f -print >&2
       exit 1
     fi
 
@@ -1295,10 +1295,10 @@ process DELSIEVE_GENE_TREE_PNG_STAGE1 {
 
     mkdir -p delsieve_stage1_gene_tree_png
 
-    tree_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.mutation_annotated.tree" | head -n 1)
+    tree_file=\$(find -L . -maxdepth 4 -type f -name "${patient_id}.stage1.mutation_annotated.tree" | head -n 1)
     if [[ -z "\$tree_file" ]]; then
       echo "No DelSIEVE mutation-annotated tree found for PNG rendering" >&2
-      find . -maxdepth 3 -type f -print >&2
+      find -L . -maxdepth 4 -type f -print >&2
       exit 1
     fi
 
