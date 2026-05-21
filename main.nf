@@ -1034,7 +1034,7 @@ process DELSIEVE_TREE_ANNOTATOR {
     tuple val(patient_id), path(stage1_run), path(stage1_xml), path(delsieve_prep)
 
     output:
-    tuple val(patient_id), path("delsieve_stage1_tree")
+    tuple val(patient_id), path("delsieve_stage1_tree/*")
 
     script:
     def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
