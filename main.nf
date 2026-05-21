@@ -1072,7 +1072,7 @@ process DELSIEVE_TREE_ANNOTATOR {
     tuple val(patient_id), path(stage1_run), path(stage1_xml), path(delsieve_prep)
 
     output:
-    tuple val(patient_id), path("delsieve_stage1_tree/*"), path(stage1_run), path(stage1_xml), path(delsieve_prep)
+    tuple val(patient_id), path("delsieve_stage1_tree/*"), path(stage1_run), path(delsieve_prep)
 
     script:
     def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
@@ -1110,7 +1110,7 @@ process DELSIEVE_TREE_PNG_STAGE1 {
     publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_tree" }, mode: 'copy', pattern: "delsieve_stage1_tree_png/*"
 
     input:
-    tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(stage1_xml), path(delsieve_prep)
+    tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(delsieve_prep)
 
     output:
     tuple val(patient_id), path("delsieve_stage1_tree_png/*")
@@ -1146,7 +1146,7 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
     publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_variants" }, mode: 'copy', pattern: "delsieve_stage1_variants/*"
 
     input:
-    tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(stage1_xml), path(delsieve_prep)
+    tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(delsieve_prep)
 
     output:
     tuple val(patient_id), path("delsieve_stage1_variants")
@@ -1175,13 +1175,20 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
       exit 1
     fi
 
+    stage1_xml_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.xml" | head -n 1)
+    if [[ -z "\$stage1_xml_file" ]]; then
+      echo "No DelSIEVE stage 1 XML found for ${patient_id}" >&2
+      find . -maxdepth 3 -type f -print >&2
+      exit 1
+    fi
+
     "${params.delsieve_applauncher}" ${version_file_args} VariantCallerLauncher \\
       -threads "${params.delsieve_threads}" \\
       -prefix "\$PWD/delsieve_stage1_variants/" \\
       -burnin "${params.delsieve_variant_burnin}" \\
       -estimates "${params.delsieve_variant_estimates}" \\
       -mcmclog "\$mcmc_log" \\
-      -config "${stage1_xml}" \\
+      -config "\$stage1_xml_file" \\
       -tree "\$mcc_tree" \\
       -details \\
       ${params.delsieve_variant_extra_args} \\
@@ -1189,7 +1196,7 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
 
     cp "\$mcc_tree" "\$PWD/delsieve_stage1_variants/${patient_id}.stage1.mcc.tree"
     cp "\$mcmc_log" "\$PWD/delsieve_stage1_variants/\$(basename "\$mcmc_log")"
-    cp "${stage1_xml}" "\$PWD/delsieve_stage1_variants/${patient_id}.stage1.xml"
+    cp "\$stage1_xml_file" "\$PWD/delsieve_stage1_variants/${patient_id}.stage1.xml"
     cp "${delsieve_prep}/candidate_sites.tsv" "\$PWD/delsieve_stage1_variants/candidate_sites.tsv"
     cp "${delsieve_prep}/cell_names.tsv" "\$PWD/delsieve_stage1_variants/cell_names.tsv"
     awk 'BEGIN { FS=OFS="\t" }
