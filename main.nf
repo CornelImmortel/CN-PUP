@@ -1046,7 +1046,7 @@ process DELSIEVE_TREE_ANNOTATOR {
 
     mkdir -p delsieve_stage1_tree
 
-    tree_file=\$(find "${stage1_run}" -maxdepth 1 -type f \\( -name "*.trees" -o -name "*.tree" \\) | head -n 1)
+    tree_file=\$(find -L "${stage1_run}" -maxdepth 1 -type f \\( -name "*.trees" -o -name "*.tree" \\) | head -n 1)
     if [[ -z "\$tree_file" ]]; then
       echo "No BEAST tree file found in ${stage1_run}" >&2
       exit 1
