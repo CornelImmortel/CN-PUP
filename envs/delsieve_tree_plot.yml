@@ -1,0 +1,6 @@
+name: cnpup-delsieve-tree-plot
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - figtree

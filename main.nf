@@ -68,6 +68,20 @@ params.run_delsieve_variant_caller = params.run_delsieve_variant_caller == null 
 params.delsieve_variant_burnin = params.delsieve_variant_burnin ?: params.delsieve_tree_burnin
 params.delsieve_variant_estimates = params.delsieve_variant_estimates ?: "median"
 params.delsieve_variant_extra_args = params.delsieve_variant_extra_args ?: ""
+params.run_delsieve_tree_png = params.run_delsieve_tree_png == null ? true : params.run_delsieve_tree_png
+params.delsieve_figtree = params.delsieve_figtree ?: "figtree"
+params.delsieve_figtree_extra_args = params.delsieve_figtree_extra_args ?: ""
+params.run_delsieve_gene_annotator = params.run_delsieve_gene_annotator == null ? true : params.run_delsieve_gene_annotator
+params.delsieve_mutation_map = params.delsieve_mutation_map ?: ""
+params.delsieve_geneannotator_subst = params.delsieve_geneannotator_subst ?: 1
+params.delsieve_mutation_map_annovar = params.delsieve_mutation_map_annovar ?: false
+params.delsieve_annovar_separator = params.delsieve_annovar_separator ?: 0
+params.delsieve_annovar_filter_col = params.delsieve_annovar_filter_col == null ? -1 : params.delsieve_annovar_filter_col
+params.delsieve_annovar_filter_keywords = params.delsieve_annovar_filter_keywords ?: ""
+params.delsieve_gene_filter = params.delsieve_gene_filter ?: ""
+params.delsieve_gene_filter_sep = params.delsieve_gene_filter_sep ?: 0
+params.delsieve_gene_filter_col = params.delsieve_gene_filter_col ?: 0
+params.delsieve_geneannotator_extra_args = params.delsieve_geneannotator_extra_args ?: ""
 
 def resolveInputPath(value) {
     if (value == null) {
@@ -409,9 +423,26 @@ workflow {
                 DELSIEVE_TREE_ANNOTATOR(RUN_DELSIEVE_STAGE1.out)
                 DELSIEVE_TREE_ANNOTATOR.out.view { "DelSIEVE annotated tree: ${it[1]}" }
 
+                if (params.run_delsieve_tree_png) {
+                    DELSIEVE_TREE_PNG_STAGE1(DELSIEVE_TREE_ANNOTATOR.out)
+                    DELSIEVE_TREE_PNG_STAGE1.out.view { "DelSIEVE stage 1 tree PNG: ${it[1]}" }
+                }
+
                 if (params.run_delsieve_variant_caller) {
                     DELSIEVE_VARIANT_CALLER_STAGE1(DELSIEVE_TREE_ANNOTATOR.out)
                     DELSIEVE_VARIANT_CALLER_STAGE1.out.view { "DelSIEVE stage 1 variants: ${it[1]}" }
+
+                    if (params.run_delsieve_gene_annotator && params.delsieve_mutation_map) {
+                        DELSIEVE_GENE_ANNOTATOR_STAGE1(DELSIEVE_VARIANT_CALLER_STAGE1.out)
+                        DELSIEVE_GENE_ANNOTATOR_STAGE1.out.view { "DelSIEVE stage 1 mutation-annotated tree: ${it[1]}" }
+
+                        if (params.run_delsieve_tree_png) {
+                            DELSIEVE_GENE_TREE_PNG_STAGE1(DELSIEVE_GENE_ANNOTATOR_STAGE1.out)
+                            DELSIEVE_GENE_TREE_PNG_STAGE1.out.view { "DelSIEVE stage 1 mutation-annotated PNG: ${it[1]}" }
+                        }
+                    } else {
+                        log.info "DelSIEVE gene/mutation tree annotation skipped. Provide --delsieve_mutation_map to annotate branch mutations."
+                    }
                 }
             }
         }
@@ -1075,6 +1106,42 @@ process DELSIEVE_TREE_ANNOTATOR {
     """
 }
 
+process DELSIEVE_TREE_PNG_STAGE1 {
+    tag "$patient_id"
+    conda "envs/delsieve_tree_plot.yml"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_tree" }, mode: 'copy', pattern: "delsieve_stage1_tree_png/*"
+
+    input:
+    tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(stage1_xml), path(delsieve_prep)
+
+    output:
+    tuple val(patient_id), path("delsieve_stage1_tree_png/*")
+
+    script:
+    """
+    set -euo pipefail
+
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
+
+    mkdir -p delsieve_stage1_tree_png
+
+    tree_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.mcc.tree" | head -n 1)
+    if [[ -z "\$tree_file" ]]; then
+      echo "No DelSIEVE MCC tree found for PNG rendering" >&2
+      find . -maxdepth 3 -type f -print >&2
+      exit 1
+    fi
+
+    "${params.delsieve_figtree}" -graphic PNG ${params.delsieve_figtree_extra_args} \\
+      "\$tree_file" \\
+      "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.figtree.png" \\
+      > "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.figtree.log" 2>&1
+
+    cp "\$tree_file" "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.tree"
+    """
+}
+
 process DELSIEVE_VARIANT_CALLER_STAGE1 {
     tag "$patient_id"
     cpus params.delsieve_threads
@@ -1084,7 +1151,7 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
     tuple val(patient_id), path(stage1_tree_files), path(stage1_run), path(stage1_xml), path(delsieve_prep)
 
     output:
-    tuple val(patient_id), path("delsieve_stage1_variants/*")
+    tuple val(patient_id), path("delsieve_stage1_variants")
 
     script:
     def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
@@ -1135,6 +1202,85 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
       echo "Produced files:"
       find "\$PWD/delsieve_stage1_variants" -maxdepth 1 -type f -printf "%f\\n" | sort
     } > "\$PWD/delsieve_stage1_variants/${patient_id}.stage1_variantcaller_manifest.tsv"
+    """
+}
+
+process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
+    tag "$patient_id"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_gene_tree" }, mode: 'copy', pattern: "delsieve_stage1_gene_tree/*"
+
+    input:
+    tuple val(patient_id), path(delsieve_stage1_variants)
+
+    output:
+    tuple val(patient_id), path("delsieve_stage1_gene_tree/*")
+
+    script:
+    def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
+    def mutation_map = resolveInputPath(params.delsieve_mutation_map)
+    def annovar_args = params.delsieve_mutation_map_annovar ? "-anv ${params.delsieve_annovar_separator} -anvfiltercol ${params.delsieve_annovar_filter_col}" : ""
+    def annovar_filter_args = params.delsieve_annovar_filter_keywords ? "-anvfilterkws ${params.delsieve_annovar_filter_keywords}" : ""
+    def gene_filter_args = params.delsieve_gene_filter ? "-filter ${resolveInputPath(params.delsieve_gene_filter)} -sep ${params.delsieve_gene_filter_sep} -col ${params.delsieve_gene_filter_col}" : ""
+    """
+    set -euo pipefail
+
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
+
+    mkdir -p delsieve_stage1_gene_tree
+
+    test -s "${mutation_map}" || { echo "DelSIEVE mutation map not found or empty: ${mutation_map}" >&2; exit 1; }
+
+    "${params.delsieve_applauncher}" ${version_file_args} GeneAnnotatorLauncher \\
+      -details "${delsieve_stage1_variants}" \\
+      -subst "${params.delsieve_geneannotator_subst}" \\
+      -map "${mutation_map}" \\
+      ${annovar_args} \\
+      ${annovar_filter_args} \\
+      ${gene_filter_args} \\
+      ${params.delsieve_geneannotator_extra_args} \\
+      -out "\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mutation_annotated.tree" \\
+      > "\$PWD/delsieve_stage1_gene_tree/${patient_id}.geneannotator.log" 2>&1
+
+    cp "${delsieve_stage1_variants}/${patient_id}.stage1.mcc.tree" "\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mcc.tree"
+    cp "${delsieve_stage1_variants}/candidate_sites.tsv" "\$PWD/delsieve_stage1_gene_tree/candidate_sites.tsv"
+    cp "${delsieve_stage1_variants}/cell_names.tsv" "\$PWD/delsieve_stage1_gene_tree/cell_names.tsv"
+    """
+}
+
+process DELSIEVE_GENE_TREE_PNG_STAGE1 {
+    tag "$patient_id"
+    conda "envs/delsieve_tree_plot.yml"
+    publishDir { "${params.outdir}/${patient_id}/delsieve_stage1_gene_tree" }, mode: 'copy', pattern: "delsieve_stage1_gene_tree_png/*"
+
+    input:
+    tuple val(patient_id), path(gene_tree_files)
+
+    output:
+    tuple val(patient_id), path("delsieve_stage1_gene_tree_png/*")
+
+    script:
+    """
+    set -euo pipefail
+
+    unset DISPLAY
+    export JAVA_TOOL_OPTIONS="\${JAVA_TOOL_OPTIONS:-} -Djava.awt.headless=true"
+
+    mkdir -p delsieve_stage1_gene_tree_png
+
+    tree_file=\$(find . -maxdepth 2 -type f -name "${patient_id}.stage1.mutation_annotated.tree" | head -n 1)
+    if [[ -z "\$tree_file" ]]; then
+      echo "No DelSIEVE mutation-annotated tree found for PNG rendering" >&2
+      find . -maxdepth 3 -type f -print >&2
+      exit 1
+    fi
+
+    "${params.delsieve_figtree}" -graphic PNG ${params.delsieve_figtree_extra_args} \\
+      "\$tree_file" \\
+      "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.figtree.png" \\
+      > "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.figtree.log" 2>&1
+
+    cp "\$tree_file" "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.tree"
     """
 }
 
