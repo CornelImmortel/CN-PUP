@@ -432,7 +432,7 @@ workflow {
                     DELSIEVE_VARIANT_CALLER_STAGE1(DELSIEVE_TREE_ANNOTATOR.out)
                     DELSIEVE_VARIANT_CALLER_STAGE1.out.view { "DelSIEVE stage 1 variants: ${it[1]}" }
 
-                    if (params.run_delsieve_gene_annotator && params.delsieve_mutation_map) {
+                    if (params.run_delsieve_gene_annotator) {
                         DELSIEVE_GENE_ANNOTATOR_STAGE1(DELSIEVE_VARIANT_CALLER_STAGE1.out)
                         DELSIEVE_GENE_ANNOTATOR_STAGE1.out.view { "DelSIEVE stage 1 mutation-annotated tree: ${it[1]}" }
 
@@ -440,8 +440,6 @@ workflow {
                             DELSIEVE_GENE_TREE_PNG_STAGE1(DELSIEVE_GENE_ANNOTATOR_STAGE1.out)
                             DELSIEVE_GENE_TREE_PNG_STAGE1.out.view { "DelSIEVE stage 1 mutation-annotated PNG: ${it[1]}" }
                         }
-                    } else {
-                        log.info "DelSIEVE gene/mutation tree annotation skipped. Provide --delsieve_mutation_map to annotate branch mutations."
                     }
                 }
             }
@@ -1194,6 +1192,23 @@ process DELSIEVE_VARIANT_CALLER_STAGE1 {
     cp "${stage1_xml}" "\$PWD/delsieve_stage1_variants/${patient_id}.stage1.xml"
     cp "${delsieve_prep}/candidate_sites.tsv" "\$PWD/delsieve_stage1_variants/candidate_sites.tsv"
     cp "${delsieve_prep}/cell_names.tsv" "\$PWD/delsieve_stage1_variants/cell_names.tsv"
+    awk 'BEGIN { FS=OFS="\t" }
+      NR == 1 {
+        for (i = 1; i <= NF; i++) idx[\$i] = i
+        next
+      }
+      {
+        chrom = \$(idx["chrom"])
+        pos = \$(idx["pos"])
+        var_id = \$(idx["var_id"])
+        gene = (idx["gene_symbol"] ? \$(idx["gene_symbol"]) : "")
+        gsub(/[;,][[:space:]]*/, ",", gene)
+        if (gene == "" || gene == "." || tolower(gene) == "unknown" || tolower(gene) == "unannotated" || tolower(gene) == "na" || tolower(gene) == "n/a") {
+          gene = var_id
+        }
+        print chrom, pos, pos, gene
+      }
+    ' "${delsieve_prep}/candidate_sites.tsv" > "\$PWD/delsieve_stage1_variants/mutation_map.tsv"
 
     {
       echo "patient_id	stage	mcc_tree	mcmc_log	config_xml	variantcaller_log"
@@ -1217,7 +1232,7 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
 
     script:
     def version_file_args = params.delsieve_version_file ? "-version_file ${resolveInputPath(params.delsieve_version_file)}" : ""
-    def mutation_map = resolveInputPath(params.delsieve_mutation_map)
+    def supplied_mutation_map = params.delsieve_mutation_map ? resolveInputPath(params.delsieve_mutation_map) : ""
     def annovar_args = params.delsieve_mutation_map_annovar ? "-anv ${params.delsieve_annovar_separator} -anvfiltercol ${params.delsieve_annovar_filter_col}" : ""
     def annovar_filter_args = params.delsieve_annovar_filter_keywords ? "-anvfilterkws ${params.delsieve_annovar_filter_keywords}" : ""
     def gene_filter_args = params.delsieve_gene_filter ? "-filter ${resolveInputPath(params.delsieve_gene_filter)} -sep ${params.delsieve_gene_filter_sep} -col ${params.delsieve_gene_filter_col}" : ""
@@ -1229,12 +1244,16 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
 
     mkdir -p delsieve_stage1_gene_tree
 
-    test -s "${mutation_map}" || { echo "DelSIEVE mutation map not found or empty: ${mutation_map}" >&2; exit 1; }
+    mutation_map="${supplied_mutation_map}"
+    if [[ -z "\$mutation_map" ]]; then
+      mutation_map="${delsieve_stage1_variants}/mutation_map.tsv"
+    fi
+    test -s "\$mutation_map" || { echo "DelSIEVE mutation map not found or empty: \$mutation_map" >&2; exit 1; }
 
     "${params.delsieve_applauncher}" ${version_file_args} GeneAnnotatorLauncher \\
       -details "${delsieve_stage1_variants}" \\
       -subst "${params.delsieve_geneannotator_subst}" \\
-      -map "${mutation_map}" \\
+      -map "\$mutation_map" \\
       ${annovar_args} \\
       ${annovar_filter_args} \\
       ${gene_filter_args} \\
@@ -1245,6 +1264,7 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
     cp "${delsieve_stage1_variants}/${patient_id}.stage1.mcc.tree" "\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mcc.tree"
     cp "${delsieve_stage1_variants}/candidate_sites.tsv" "\$PWD/delsieve_stage1_gene_tree/candidate_sites.tsv"
     cp "${delsieve_stage1_variants}/cell_names.tsv" "\$PWD/delsieve_stage1_gene_tree/cell_names.tsv"
+    cp "\$mutation_map" "\$PWD/delsieve_stage1_gene_tree/mutation_map.tsv"
     """
 }
 
