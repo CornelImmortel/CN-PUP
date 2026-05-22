@@ -10,6 +10,10 @@ from pathlib import Path
 
 
 TSV_KWARGS = {"delimiter": "\t", "lineterminator": "\n"}
+MISSING_ANNOTATION_VALUES = {"", ".", "NA", "N/A", "NONE", "UNKNOWN", "UNANNOTATED"}
+GENE_FIELDS = ("gene_symbol", "SYMBOL", "Gene", "gene", "gene_name", "hgnc_symbol", "HGNC")
+PROTEIN_FIELDS = ("hgvs_p", "HGVSp", "protein_change")
+CONSEQUENCE_FIELDS = ("effect", "Consequence", "consequence")
 
 
 def open_text(path: str):
@@ -23,6 +27,17 @@ def to_float(value):
         return float(value)
     except ValueError:
         return None
+
+
+def add_annotation_values(row, fields, target):
+    for field in fields:
+        value = row.get(field, "")
+        if value is None:
+            continue
+        for item in re.split(r"[;,]", value):
+            item = item.strip()
+            if item and item.upper() not in MISSING_ANNOTATION_VALUES:
+                target.add(item)
 
 
 def load_ctc_bams(cell_metadata: Path):
@@ -77,10 +92,9 @@ def select_candidates(args):
                 continue
             support[var_id].add(sample_id)
             callers[var_id].add(caller)
-            for field, target in (("gene_symbol", genes), ("hgvs_p", proteins), ("effect", consequences)):
-                value = row.get(field, "")
-                if value:
-                    target[var_id].add(value)
+            add_annotation_values(row, GENE_FIELDS, genes[var_id])
+            add_annotation_values(row, PROTEIN_FIELDS, proteins[var_id])
+            add_annotation_values(row, CONSEQUENCE_FIELDS, consequences[var_id])
             by_var.setdefault(var_id, row)
 
     kept = []
