@@ -1257,8 +1257,27 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
     fi
     test -s "\$mutation_map" || { echo "DelSIEVE mutation map not found or empty: \$mutation_map" >&2; exit 1; }
 
+    details_input="\$PWD/delsieve_stage1_geneannotator_details"
+    mkdir -p "\$details_input"
+    for detail_file in "${delsieve_stage1_variants}"/*; do
+      if [[ -f "\$detail_file" ]]; then
+        case "\$(basename "\$detail_file")" in
+          *.loci_info|*.ternary)
+            awk 'NF > 0' "\$detail_file" > "\$details_input/\$(basename "\$detail_file")"
+            ;;
+          *)
+            cp "\$detail_file" "\$details_input/\$(basename "\$detail_file")"
+            ;;
+        esac
+      fi
+    done
+
+    loci_info=\$(find "\$details_input" -maxdepth 1 -type f -name "*.loci_info" | head -n 1)
+    test -s "\$loci_info" || { echo "DelSIEVE GeneAnnotator loci_info detail file is missing or empty" >&2; exit 1; }
+    awk 'NF != 4 { print "Malformed DelSIEVE loci_info row " NR ": " \$0 > "/dev/stderr"; exit 1 }' "\$loci_info"
+
     "${params.delsieve_applauncher}" ${version_file_args} GeneAnnotatorLauncher \\
-      -details "${delsieve_stage1_variants}" \\
+      -details "\$details_input" \\
       -subst "${params.delsieve_geneannotator_subst}" \\
       -map "\$mutation_map" \\
       ${annovar_args} \\
@@ -1287,6 +1306,8 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
     cp "${delsieve_stage1_variants}/candidate_sites.tsv" "\$PWD/delsieve_stage1_gene_tree/candidate_sites.tsv"
     cp "${delsieve_stage1_variants}/cell_names.tsv" "\$PWD/delsieve_stage1_gene_tree/cell_names.tsv"
     cp "\$mutation_map" "\$PWD/delsieve_stage1_gene_tree/mutation_map.tsv"
+    cp "\$details_input"/*.loci_info "\$PWD/delsieve_stage1_gene_tree/" 2>/dev/null || true
+    cp "\$details_input"/*.ternary "\$PWD/delsieve_stage1_gene_tree/" 2>/dev/null || true
     """
 }
 
