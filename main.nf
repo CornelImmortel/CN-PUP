@@ -1268,6 +1268,21 @@ process DELSIEVE_GENE_ANNOTATOR_STAGE1 {
       -out "\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mutation_annotated.tree" \\
       > "\$PWD/delsieve_stage1_gene_tree/${patient_id}.geneannotator.log" 2>&1
 
+    expected_tree="\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mutation_annotated.tree"
+    if [[ ! -s "\$expected_tree" ]]; then
+      produced_tree=\$(find "\$PWD" -maxdepth 2 -type f \\( -name "*.tree" -o -name "*.trees" \\) ! -name "${patient_id}.stage1.mcc.tree" | head -n 1)
+      if [[ -n "\$produced_tree" ]]; then
+        cp "\$produced_tree" "\$expected_tree"
+      else
+        cp "${delsieve_stage1_variants}/${patient_id}.stage1.mcc.tree" "\$expected_tree"
+        {
+          echo "WARNING: GeneAnnotatorLauncher completed but did not create an annotated tree."
+          echo "CN-PUP copied the MCC tree to ${patient_id}.stage1.mutation_annotated.tree so downstream PNG rendering can continue."
+          echo "Inspect ${patient_id}.geneannotator.log to confirm whether GeneAnnotator found branch mutation labels."
+        } > "\$PWD/delsieve_stage1_gene_tree/${patient_id}.geneannotator.warning.txt"
+      fi
+    fi
+
     cp "${delsieve_stage1_variants}/${patient_id}.stage1.mcc.tree" "\$PWD/delsieve_stage1_gene_tree/${patient_id}.stage1.mcc.tree"
     cp "${delsieve_stage1_variants}/candidate_sites.tsv" "\$PWD/delsieve_stage1_gene_tree/candidate_sites.tsv"
     cp "${delsieve_stage1_variants}/cell_names.tsv" "\$PWD/delsieve_stage1_gene_tree/cell_names.tsv"
