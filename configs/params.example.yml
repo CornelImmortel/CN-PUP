@@ -3,6 +3,7 @@ outdir: results
 monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
 monovar_threads: 2
 monovar_region: ""
+monovar_targets_bed: ""
 run_monovar: false
 run_delsieve_prep: false
 run_delsieve: false

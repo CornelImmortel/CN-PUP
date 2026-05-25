@@ -13,6 +13,7 @@ params.outdir = params.outdir ?: "results"
 params.monovar_script = params.monovar_script ?: ""
 params.monovar_threads = params.monovar_threads ?: 2
 params.monovar_region = params.monovar_region ?: ""
+params.monovar_targets_bed = params.monovar_targets_bed ?: ""
 params.monovar_background_ctc_count = params.monovar_background_ctc_count ?: 5
 params.monovar_background_seed = params.monovar_background_seed ?: 13
 params.run_monovar = params.run_monovar ?: false
@@ -1374,6 +1375,8 @@ process CHECK_INPUTS {
     echo "leukocyte_bam\t${leukocyte_bam}" >> "\$report"
     echo "leukocyte_vcf\t${leukocyte_vcf}" >> "\$report"
     echo "monovar_script\t${params.monovar_script}" >> "\$report"
+    echo "monovar_region\t${params.monovar_region}" >> "\$report"
+    echo "monovar_targets_bed\t${params.monovar_targets_bed}" >> "\$report"
     echo >> "\$report"
 
     test -n "${patient_id}" || { echo "ERROR: missing patient_id" >&2; exit 1; }
@@ -1426,6 +1429,10 @@ process CHECK_INPUTS {
     if [[ "${params.run_monovar}" == "true" ]]; then
       test -n "${params.monovar_script}" || { echo "ERROR: --monovar_script is required when --run_monovar true" >&2; exit 1; }
       test -s "${params.monovar_script}" || { echo "ERROR: monovar_script not found: ${params.monovar_script}" >&2; exit 1; }
+      if [[ -n "${params.monovar_targets_bed}" ]]; then
+        test -s "${params.monovar_targets_bed}" || { echo "ERROR: monovar_targets_bed not found: ${params.monovar_targets_bed}" >&2; exit 1; }
+        zcat -f "${params.monovar_targets_bed}" | awk 'BEGIN{ok=0} /^[[:space:]]*($|#)/ {next} NF < 3 { print "ERROR: malformed monovar_targets_bed row " NR ": " \$0 > "/dev/stderr"; exit 1 } {ok=1; exit} END { if (!ok) { print "ERROR: monovar_targets_bed has no BED intervals" > "/dev/stderr"; exit 1 } }'
+      fi
     fi
 
     if [[ "${params.run_sccaller}" == "true" ]]; then
@@ -1542,11 +1549,19 @@ process RUN_MONOVAR_WBC_SUBSET {
     echo "Reference: ${ref_fasta}" >> "${patient_id}.monovar_wbc_subset.log"
     echo "MonoVar: ${params.monovar_script}" >> "${patient_id}.monovar_wbc_subset.log"
     echo "Region: ${params.monovar_region}" >> "${patient_id}.monovar_wbc_subset.log"
+    echo "Targets BED: ${params.monovar_targets_bed}" >> "${patient_id}.monovar_wbc_subset.log"
     echo >> "${patient_id}.monovar_wbc_subset.log"
 
     region_args=()
     if [[ -n "${params.monovar_region}" ]]; then
       region_args=(-r "${params.monovar_region}")
+    fi
+    target_args=()
+    if [[ -n "${params.monovar_targets_bed}" ]]; then
+      test -s "${params.monovar_targets_bed}" || { echo "ERROR: monovar_targets_bed not found: ${params.monovar_targets_bed}" >&2; exit 1; }
+      zcat -f "${params.monovar_targets_bed}" > "\$PWD/monovar_targets.bed"
+      test -s "\$PWD/monovar_targets.bed" || { echo "ERROR: monovar_targets_bed produced no intervals: ${params.monovar_targets_bed}" >&2; exit 1; }
+      target_args=(-l "\$PWD/monovar_targets.bed")
     fi
 
     samtools mpileup \
@@ -1554,6 +1569,7 @@ process RUN_MONOVAR_WBC_SUBSET {
       -d10000 \
       -f "${ref_fasta}" \
       -q 40 \
+      "\${target_args[@]}" \
       -b "${monovar_bam_list}" \
       "\${region_args[@]}" \
     | python "${params.monovar_script}" \
@@ -1623,11 +1639,19 @@ process RUN_MONOVAR {
     echo "Reference: ${ref_fasta}" >> "${patient_id}.monovar.log"
     echo "MonoVar: ${params.monovar_script}" >> "${patient_id}.monovar.log"
     echo "Region: ${params.monovar_region}" >> "${patient_id}.monovar.log"
+    echo "Targets BED: ${params.monovar_targets_bed}" >> "${patient_id}.monovar.log"
     echo >> "${patient_id}.monovar.log"
 
     region_args=()
     if [[ -n "${params.monovar_region}" ]]; then
       region_args=(-r "${params.monovar_region}")
+    fi
+    target_args=()
+    if [[ -n "${params.monovar_targets_bed}" ]]; then
+      test -s "${params.monovar_targets_bed}" || { echo "ERROR: monovar_targets_bed not found: ${params.monovar_targets_bed}" >&2; exit 1; }
+      zcat -f "${params.monovar_targets_bed}" > "\$PWD/monovar_targets.bed"
+      test -s "\$PWD/monovar_targets.bed" || { echo "ERROR: monovar_targets_bed produced no intervals: ${params.monovar_targets_bed}" >&2; exit 1; }
+      target_args=(-l "\$PWD/monovar_targets.bed")
     fi
 
     samtools mpileup \
@@ -1635,6 +1659,7 @@ process RUN_MONOVAR {
       -d10000 \
       -f "${ref_fasta}" \
       -q 40 \
+      "\${target_args[@]}" \
       -b "${monovar_bam_list}" \
       "\${region_args[@]}" \
     | python "${params.monovar_script}" \
