@@ -1431,7 +1431,7 @@ process CHECK_INPUTS {
       test -s "${params.monovar_script}" || { echo "ERROR: monovar_script not found: ${params.monovar_script}" >&2; exit 1; }
       if [[ -n "${params.monovar_targets_bed}" ]]; then
         test -s "${params.monovar_targets_bed}" || { echo "ERROR: monovar_targets_bed not found: ${params.monovar_targets_bed}" >&2; exit 1; }
-        zcat -f "${params.monovar_targets_bed}" | awk 'BEGIN{ok=0} /^[[:space:]]*#/ {next} NF == 0 {next} NF < 3 { print "ERROR: malformed monovar_targets_bed row " NR ": " \$0 > "/dev/stderr"; exit 1 } {ok=1; exit} END { if (!ok) { print "ERROR: monovar_targets_bed has no BED intervals" > "/dev/stderr"; exit 1 } }'
+        zcat -f "${params.monovar_targets_bed}" | awk 'BEGIN{ok=0} /^[[:space:]]*#/ {next} NF == 0 {next} NF < 3 { print "ERROR: malformed monovar_targets_bed row " NR ": " \$0 > "/dev/stderr"; exit 1 } {ok=1} END { if (!ok) { print "ERROR: monovar_targets_bed has no BED intervals" > "/dev/stderr"; exit 1 } }'
       fi
     fi
 
