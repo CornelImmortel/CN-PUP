@@ -731,11 +731,26 @@ process BUILD_CALLER_COMPARISON {
 
     mkdir -p comparable_calls cache/per_sample cache/merged matrices ctc_scite_inputs reports
     for vcf in ${comparable_vcfs}; do
-      caller=\$(basename "\$vcf" | sed -E 's/^.+\\.([^.]+)\\.comparable\\.vcf\\.gz\$/\\1/')
+      base=\$(basename "\$vcf")
+      caller=""
+      staged_base=""
+      if [[ "\$base" =~ ^(.+)\\.([^.]+)\\.comparable\\.vcf\\.gz\$ ]]; then
+        caller="\${BASH_REMATCH[2]}"
+        staged_base="\$base"
+      elif [[ "\$base" =~ ^(.+)\\.monovar\\.no_.+\\.vcf\\.gz\$ ]]; then
+        caller="monovar"
+        staged_base="\${BASH_REMATCH[1]}.monovar.comparable.vcf.gz"
+      elif [[ "\$base" =~ ^(.+)\\.monovar\\.population_cosmic\\.vcf\\.gz\$ ]]; then
+        caller="monovar"
+        staged_base="\${BASH_REMATCH[1]}.monovar.comparable.vcf.gz"
+      else
+        echo "ERROR: cannot infer sample/caller from comparable VCF name: \$base" >&2
+        exit 1
+      fi
       mkdir -p "comparable_calls/\$caller"
-      cp "\$vcf" "comparable_calls/\$caller/"
+      cp "\$vcf" "comparable_calls/\$caller/\$staged_base"
       if [[ -f "\${vcf}.tbi" ]]; then
-        cp "\${vcf}.tbi" "comparable_calls/\$caller/"
+        cp "\${vcf}.tbi" "comparable_calls/\$caller/\$staged_base.tbi"
       fi
     done
 
