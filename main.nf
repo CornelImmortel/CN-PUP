@@ -2152,6 +2152,13 @@ process SNV_HTML_REPORT {
     """
     set -euo pipefail
 
+    mkdir -p report_inputs
+    cp "${long_table}" report_inputs/long.tsv
+    cp "${binary_matrix}" report_inputs/binary_matrix.tsv
+    cp "${altread_matrix}" report_inputs/altread_matrix.tsv
+    cp "${refread_matrix}" report_inputs/refread_matrix.tsv
+    cp "${summary_table}" report_inputs/summary.tsv
+
     Rscript -e 'rmarkdown::render(
       "${projectDir}/assets/snv_report.Rmd",
       output_file="${patient_id}.snv_report.html",
@@ -2159,11 +2166,11 @@ process SNV_HTML_REPORT {
       knit_root_dir=getwd(),
       params=list(
         patient_id="${patient_id}",
-        long_table=normalizePath("${long_table}", mustWork=TRUE),
-        binary_matrix=normalizePath("${binary_matrix}", mustWork=TRUE),
-        altread_matrix=normalizePath("${altread_matrix}", mustWork=TRUE),
-        refread_matrix=normalizePath("${refread_matrix}", mustWork=TRUE),
-        summary_table=normalizePath("${summary_table}", mustWork=TRUE),
+        long_table=file.path(Sys.getenv("PWD"), "report_inputs", "long.tsv"),
+        binary_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "binary_matrix.tsv"),
+        altread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "altread_matrix.tsv"),
+        refread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "refread_matrix.tsv"),
+        summary_table=file.path(Sys.getenv("PWD"), "report_inputs", "summary.tsv"),
         out_prefix="${patient_id}.monovar"
       )
     )'
