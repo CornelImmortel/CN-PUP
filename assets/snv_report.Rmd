@@ -132,8 +132,12 @@ summary_tbl %>%
 # Shared And Private SNVs
 
 ```{r upset, fig.height=7}
-if (length(cell_ids) >= 2 && nrow(mat) > 0) {
-  upset(as.data.frame(mat > 0), nsets = min(length(cell_ids), 30), order.by = "freq")
+non_empty_sets <- colnames(mat)[colSums(mat > 0, na.rm = TRUE) > 0]
+if (length(non_empty_sets) >= 2 && nrow(mat) > 0 && any(rowSums(mat[, non_empty_sets, drop = FALSE] > 0, na.rm = TRUE) > 0)) {
+  upset_df <- as.data.frame(mat[, non_empty_sets, drop = FALSE] > 0)
+  upset(upset_df, nsets = min(length(non_empty_sets), 30), order.by = "freq")
+} else {
+  cat("No shared SNV set structure available for an UpSet plot after filtering.")
 }
 ```
 
