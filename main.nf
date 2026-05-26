@@ -329,6 +329,7 @@ workflow {
                 mosdepth_by_patient_ch = MOSDEPTH_QC.out
                     .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
                     .groupTuple(by: 0)
+                    .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
                 multiqc_full_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
                     .combine(bcftools_stats_by_patient_ch, by: 0)
                     .combine(samtools_stats_by_patient_ch, by: 0)
@@ -383,6 +384,7 @@ workflow {
                 final_report_mosdepth_ch = MOSDEPTH_QC.out
                     .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
                     .groupTuple(by: 0)
+                    .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
                 final_report_with_qc_ch = final_report_base_ch
                     .combine(final_report_samtools_ch, by: 0)
                     .combine(final_report_mosdepth_ch, by: 0)
