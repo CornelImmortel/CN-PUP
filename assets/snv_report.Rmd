@@ -134,8 +134,11 @@ summary_tbl %>%
 ```{r upset, fig.height=7}
 non_empty_sets <- colnames(mat)[colSums(mat > 0, na.rm = TRUE) > 0]
 if (length(non_empty_sets) >= 2 && nrow(mat) > 0 && any(rowSums(mat[, non_empty_sets, drop = FALSE] > 0, na.rm = TRUE) > 0)) {
-  upset_df <- as.data.frame(mat[, non_empty_sets, drop = FALSE] > 0)
-  upset(upset_df, nsets = min(length(non_empty_sets), 30), order.by = "freq")
+  upset_df <- as.data.frame((mat[, non_empty_sets, drop = FALSE] > 0) * 1L)
+  tryCatch(
+    upset(upset_df, nsets = min(length(non_empty_sets), 30), order.by = "freq"),
+    error = function(e) cat("UpSet plot skipped: ", conditionMessage(e), sep = "")
+  )
 } else {
   cat("No shared SNV set structure available for an UpSet plot after filtering.")
 }
