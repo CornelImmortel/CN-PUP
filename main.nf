@@ -859,7 +859,20 @@ process CN_PUP_FINAL_REPORT {
     """
     set -euo pipefail
 
-    Rscript -e 'rmarkdown::render("${projectDir}/assets/cnpup_final_report.Rmd", output_file="${patient_id}.cnpup_final_report.html", output_dir=".", params=list(patient_id="${patient_id}", data_dir="${report_data}", out_prefix="${patient_id}.cnpup_final"))'
+    mkdir -p report_data
+    cp -r ${report_data}/* report_data/
+
+    Rscript -e 'rmarkdown::render(
+      "${projectDir}/assets/cnpup_final_report.Rmd",
+      output_file="${patient_id}.cnpup_final_report.html",
+      output_dir=".",
+      knit_root_dir=getwd(),
+      params=list(
+        patient_id="${patient_id}",
+        data_dir=file.path(Sys.getenv("PWD"), "report_data"),
+        out_prefix="${patient_id}.cnpup_final"
+      )
+    )'
     """
 }
 
