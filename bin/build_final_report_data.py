@@ -60,8 +60,11 @@ def normalize_long(long_df: pd.DataFrame) -> pd.DataFrame:
         "DP": "total_depth",
         "VAF": "vaf",
         "FILTER": "filter",
+        "consequence": "effect",
     }
     long_df = long_df.rename(columns={k: v for k, v in rename.items() if k in long_df.columns})
+    if "sample_id" not in long_df.columns and "ctc_id" in long_df.columns:
+        long_df["sample_id"] = long_df["ctc_id"]
     for col in [
         "sample_id",
         "caller",
@@ -73,6 +76,11 @@ def normalize_long(long_df: pd.DataFrame) -> pd.DataFrame:
         "gene_symbol",
         "effect",
         "impact",
+        "hgvsc",
+        "hgvsp",
+        "existing_variation",
+        "max_af",
+        "max_af_pops",
         "total_depth",
         "altread",
         "vaf",
@@ -288,6 +296,11 @@ def build_top_variants(long_df: pd.DataFrame, support: dict[str, set[str]], limi
         "gene_symbol",
         "effect",
         "impact",
+        "hgvsc",
+        "hgvsp",
+        "existing_variation",
+        "max_af",
+        "max_af_pops",
     ]
     rows = []
     by_var = long_df.drop_duplicates("var_id").set_index("var_id", drop=False)
@@ -307,6 +320,11 @@ def build_top_variants(long_df: pd.DataFrame, support: dict[str, set[str]], limi
                 "gene_symbol": r.get("gene_symbol", ""),
                 "effect": r.get("effect", ""),
                 "impact": r.get("impact", ""),
+                "hgvsc": r.get("hgvsc", ""),
+                "hgvsp": r.get("hgvsp", ""),
+                "existing_variation": r.get("existing_variation", ""),
+                "max_af": r.get("max_af", ""),
+                "max_af_pops": r.get("max_af_pops", ""),
             }
         )
     out = pd.DataFrame(rows, columns=columns)
@@ -335,6 +353,55 @@ def build_tissue_overlap(long_df: pd.DataFrame, support: dict[str, set[str]], ct
             }
         )
     return pd.DataFrame(rows)
+
+
+def build_population_flags(long_df: pd.DataFrame, support: dict[str, set[str]], limit: int) -> pd.DataFrame:
+    columns = [
+        "support_ctc_count",
+        "ctc_samples",
+        "var_id",
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "gene_symbol",
+        "effect",
+        "impact",
+        "existing_variation",
+        "max_af",
+        "max_af_pops",
+    ]
+    if "max_af" not in long_df.columns:
+        return pd.DataFrame(columns=columns)
+    df = long_df.copy()
+    df["max_af_num"] = pd.to_numeric(df["max_af"], errors="coerce")
+    df = df[df["max_af_num"] > 0.01].drop_duplicates("var_id")
+    rows = []
+    for _, r in df.iterrows():
+        var_id = str(r.get("var_id", ""))
+        cells = support.get(var_id, set())
+        rows.append(
+            {
+                "support_ctc_count": len(cells),
+                "ctc_samples": ", ".join(sorted(cells)),
+                "var_id": var_id,
+                "chrom": r.get("chrom", ""),
+                "pos": r.get("pos", ""),
+                "ref": r.get("ref", ""),
+                "alt": r.get("alt", ""),
+                "gene_symbol": r.get("gene_symbol", ""),
+                "effect": r.get("effect", ""),
+                "impact": r.get("impact", ""),
+                "existing_variation": r.get("existing_variation", ""),
+                "max_af": r.get("max_af", ""),
+                "max_af_pops": r.get("max_af_pops", ""),
+            }
+        )
+    out = pd.DataFrame(rows, columns=columns)
+    if out.empty:
+        return out
+    out["_max_af_num"] = pd.to_numeric(out["max_af"], errors="coerce")
+    return out.sort_values(["support_ctc_count", "_max_af_num"], ascending=[False, False]).drop(columns=["_max_af_num"]).head(limit)
 
 
 def build_rarefaction(support: dict[str, set[str]], ctc_ids: set[str], iterations: int) -> pd.DataFrame:
@@ -405,6 +472,10 @@ def main() -> None:
     recurrent_ge2 = sum(1 for cells in support.values() if len(cells) >= 2)
     recurrent_ge3 = sum(1 for cells in support.values() if len(cells) >= 3)
     max_support = max([len(cells) for cells in support.values()] or [0])
+    max_af_num = pd.to_numeric(long_df.get("max_af", pd.Series(dtype=str)), errors="coerce")
+    common_population_variants = long_df.loc[max_af_num > 0.01, "var_id"].nunique() if len(max_af_num) else 0
+    if common_population_variants:
+        warnings.append({"level": "WARN", "message": f"{common_population_variants} retained unique variants have VEP MAX_AF > 1%; inspect population_annotation_flags.tsv before interpreting them as tumor-specific."})
     summary = pd.DataFrame(
         [
             {"metric": "patient_id", "value": args.patient_id},
@@ -419,6 +490,7 @@ def main() -> None:
             {"metric": "ctc_variants_with_support_ge2", "value": recurrent_ge2},
             {"metric": "ctc_variants_with_support_ge3", "value": recurrent_ge3},
             {"metric": "max_ctc_support_for_one_variant", "value": max_support},
+            {"metric": "retained_variants_with_max_af_gt_1pct", "value": common_population_variants},
             {"metric": "coverage_source", "value": coverage_source},
         ]
     )
@@ -428,6 +500,7 @@ def main() -> None:
     write_tsv(ctc_qc, out_dir / "ctc_qc_summary.tsv")
     write_tsv(build_sharing_spectrum(support), out_dir / "sharing_spectrum.tsv")
     write_tsv(build_top_variants(long_df, support, args.top_variant_limit), out_dir / "top_recurrent_variants.tsv")
+    write_tsv(build_population_flags(long_df, support, args.top_variant_limit), out_dir / "population_annotation_flags.tsv")
     write_tsv(build_tissue_overlap(long_df, support, ctc_ids, tissue_samples), out_dir / "ctc_tissue_overlap.tsv")
     write_tsv(build_rarefaction(support, ctc_ids, args.rarefaction_iterations), out_dir / "rarefaction.tsv")
     write_tsv(pd.DataFrame(warnings), out_dir / "warnings.tsv")

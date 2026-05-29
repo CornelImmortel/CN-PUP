@@ -13,6 +13,7 @@ params:
   altread_matrix: ""
   refread_matrix: ""
   summary_table: ""
+  flowcharts_dir: ""
   out_prefix: "snv_report"
 ---
 
@@ -29,6 +30,7 @@ suppressPackageStartupMessages({
   library(maftools)
   library(ComplexHeatmap)
   library(circlize)
+  library(htmltools)
 })
 
 patient_id <- params$patient_id
@@ -41,6 +43,9 @@ summary_tbl <- read_tsv(params$summary_table, show_col_types = FALSE)
 if (!"gene_symbol" %in% names(long)) long$gene_symbol <- ""
 if (!"consequence" %in% names(long)) long$consequence <- ""
 if (!"impact" %in% names(long)) long$impact <- ""
+for (optional_col in c("hgvsc", "hgvsp", "existing_variation", "max_af", "max_af_pops")) {
+  if (!optional_col %in% names(long)) long[[optional_col]] <- ""
+}
 
 long <- long %>%
   mutate(
@@ -89,7 +94,7 @@ make_maf <- function(df) {
       t_alt_count = altread_num,
       t_depth = DP_num,
       i_TumorVAF_WU = VAF,
-      HGVSp_Short = ""
+      HGVSp_Short = hgvsp
     )
 }
 
@@ -108,6 +113,14 @@ variant_shared_n <- rowSums(mat > 0)
 private_variants <- names(variant_shared_n[variant_shared_n == 1])
 shared2_variants <- names(variant_shared_n[variant_shared_n >= 2])
 all_shared_variants <- names(variant_shared_n[variant_shared_n == length(cell_ids)])
+
+flowcharts_dir <- params$flowcharts_dir
+flow_summary_path <- file.path(flowcharts_dir, "variant_flow_summary.tsv")
+flow_summary <- if (nzchar(flowcharts_dir) && file.exists(flow_summary_path)) {
+  read_tsv(flow_summary_path, show_col_types = FALSE)
+} else {
+  tibble()
+}
 ```
 
 # Overview
@@ -144,6 +157,23 @@ if (length(non_empty_sets) >= 2 && nrow(mat) > 0 && any(rowSums(mat[, non_empty_
 }
 ```
 
+## Interactive Set Table
+
+```{r intersection-table}
+if (nrow(mat) > 0 && ncol(mat) > 0) {
+  set_table <- tibble(
+    var_id = rownames(mat),
+    ctc_set = apply(mat > 0, 1, function(x) paste(names(x)[x], collapse = ", ")),
+    ctc_count = rowSums(mat > 0)
+  ) %>%
+    filter(ctc_count > 0) %>%
+    group_by(ctc_count, ctc_set) %>%
+    summarise(variant_count = n(), variants = paste(var_id, collapse = "; "), .groups = "drop") %>%
+    arrange(desc(ctc_count), desc(variant_count), ctc_set)
+  datatable(set_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+}
+```
+
 ```{r heatmap, fig.height=9}
 if (nrow(mat) > 1 && ncol(mat) > 1) {
   top_vars <- names(sort(variant_shared_n, decreasing = TRUE))[seq_len(min(200, length(variant_shared_n)))]
@@ -156,6 +186,8 @@ if (nrow(mat) > 1 && ncol(mat) > 1) {
           column_title = "Clustered binary SNV matrix")
 }
 ```
+
+## Pairwise Venn-Style Overlaps
 
 ```{r jaccard}
 if (ncol(mat) > 1) {
@@ -173,6 +205,49 @@ if (ncol(mat) > 1) {
           cluster_rows = TRUE,
           cluster_columns = TRUE,
           column_title = "CTC similarity based on shared SNVs")
+}
+```
+
+```{r pairwise-overlap-table}
+if (ncol(mat) > 1) {
+  pairwise_overlap <- expand.grid(cell_a = cell_ids, cell_b = cell_ids, stringsAsFactors = FALSE) %>%
+    filter(cell_a < cell_b) %>%
+    rowwise() %>%
+    mutate(
+      shared_variants = sum(mat[, cell_a] > 0 & mat[, cell_b] > 0),
+      union_variants = sum(mat[, cell_a] > 0 | mat[, cell_b] > 0),
+      jaccard = if_else(union_variants > 0, shared_variants / union_variants, 0)
+    ) %>%
+    ungroup() %>%
+    arrange(desc(shared_variants), desc(jaccard))
+  datatable(pairwise_overlap, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+}
+```
+
+# Variant Flowcharts
+
+```{r flow-summary}
+if (nrow(flow_summary)) {
+  datatable(flow_summary, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+} else {
+  cat("Variant flowchart summary was not provided to this report.")
+}
+```
+
+```{r mermaid-flowcharts, results='asis'}
+if (nrow(flow_summary) && "mermaid_path" %in% names(flow_summary)) {
+  cat('<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>\n')
+  cat('<script>mermaid.initialize({startOnLoad:true, securityLevel:"loose"});</script>\n')
+  for (i in seq_len(nrow(flow_summary))) {
+    cell <- flow_summary$sample_id[i]
+    caller <- flow_summary$caller[i]
+    rel <- flow_summary$mermaid_path[i]
+    mmd_path <- file.path(flowcharts_dir, rel)
+    if (!file.exists(mmd_path)) next
+    diagram <- paste(readLines(mmd_path, warn = FALSE), collapse = "\n")
+    cat("\n\n## ", htmlEscape(cell), " / ", htmlEscape(caller), "\n\n", sep = "")
+    cat('<pre class="mermaid">', htmlEscape(diagram), '</pre>\n', sep = "")
+  }
 }
 ```
 
@@ -246,7 +321,7 @@ if (nrow(long) > 0) {
 all_shared_table <- long %>%
   filter(var_id %in% all_shared_variants) %>%
   arrange(CHROM, POS, ctc_id) %>%
-  select(ctc_id, var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, altread, VAF)
+  select(any_of(c("ctc_id", "var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "altread", "VAF")))
 datatable(all_shared_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
 ```
 
@@ -257,7 +332,7 @@ shared2_table <- long %>%
   filter(var_id %in% shared2_variants) %>%
   mutate(shared_ctc_count = variant_shared_n[var_id]) %>%
   arrange(desc(shared_ctc_count), CHROM, POS, ctc_id) %>%
-  select(shared_ctc_count, ctc_id, var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, altread, VAF)
+  select(any_of(c("shared_ctc_count", "ctc_id", "var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "altread", "VAF")))
 datatable(shared2_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
 ```
 
@@ -271,7 +346,7 @@ for (cell in cell_ids) {
   if (nrow(dd) > 0) {
     print(
       dd %>%
-        select(var_id, CHROM, POS, REF, ALT, gene_symbol, consequence, impact, DP, refread, altread, VAF, GT, FILTER) %>%
+        select(any_of(c("var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "refread", "altread", "VAF", "GT", "FILTER"))) %>%
         datatable(rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))
     )
   }

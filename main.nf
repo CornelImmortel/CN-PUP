@@ -303,11 +303,17 @@ workflow {
             final_vcfs_by_patient_ch = final_vcf_cell_ch
                 .map { patient_id, cell_id, final_vcf -> tuple(patient_id, final_vcf) }
                 .groupTuple(by: 0)
-            BUILD_MUTATION_MATRICES(final_vcfs_by_patient_ch)
+            final_vep_by_patient_ch = MERGE_VEP_AND_POPULATION_COSMIC_FILTER.out
+                .map { patient_id, cell_id, vep_tsv, final_vcf, summary_tsv, log_file -> tuple(patient_id, vep_tsv) }
+                .groupTuple(by: 0)
+            final_matrix_input_ch = final_vcfs_by_patient_ch.combine(final_vep_by_patient_ch, by: 0)
+            BUILD_MUTATION_MATRICES(final_matrix_input_ch)
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
 
             if (params.run_snv_report) {
-                SNV_HTML_REPORT(BUILD_MUTATION_MATRICES.out)
+                snv_report_input_ch = BUILD_MUTATION_MATRICES.out
+                    .combine(MONOVAR_VARIANT_FLOWCHARTS.out, by: 0)
+                SNV_HTML_REPORT(snv_report_input_ch)
                 SNV_HTML_REPORT.out.view { "SNV HTML report: ${it[1]}" }
             }
 
@@ -375,24 +381,46 @@ workflow {
         BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
 
         if (params.run_final_report) {
-            final_report_base_ch = BUILD_CALLER_COMPARISON.out
-                .join(checked_info_ch, by: 0)
-            if (params.run_bam_qc) {
-                final_report_samtools_ch = SAMTOOLS_STATS.out
-                    .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
-                    .groupTuple(by: 0)
-                final_report_mosdepth_ch = MOSDEPTH_QC.out
-                    .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
-                    .groupTuple(by: 0)
-                    .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
-                final_report_with_qc_ch = final_report_base_ch
-                    .combine(final_report_samtools_ch, by: 0)
-                    .combine(final_report_mosdepth_ch, by: 0)
-                BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC(final_report_with_qc_ch)
-                final_report_data_ch = BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC.out
+            if (params.run_vep_filter) {
+                final_report_base_ch = BUILD_MUTATION_MATRICES.out
+                    .join(checked_info_ch, by: 0)
+                if (params.run_bam_qc) {
+                    final_report_samtools_ch = SAMTOOLS_STATS.out
+                        .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
+                        .groupTuple(by: 0)
+                    final_report_mosdepth_ch = MOSDEPTH_QC.out
+                        .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
+                        .groupTuple(by: 0)
+                        .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
+                    final_report_with_qc_ch = final_report_base_ch
+                        .combine(final_report_samtools_ch, by: 0)
+                        .combine(final_report_mosdepth_ch, by: 0)
+                    BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS_WITH_ALIGNMENT_QC(final_report_with_qc_ch)
+                    final_report_data_ch = BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS_WITH_ALIGNMENT_QC.out
+                } else {
+                    BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS(final_report_base_ch)
+                    final_report_data_ch = BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS.out
+                }
             } else {
-                BUILD_FINAL_REPORT_DATA(final_report_base_ch)
-                final_report_data_ch = BUILD_FINAL_REPORT_DATA.out
+                final_report_base_ch = BUILD_CALLER_COMPARISON.out
+                    .join(checked_info_ch, by: 0)
+                if (params.run_bam_qc) {
+                    final_report_samtools_ch = SAMTOOLS_STATS.out
+                        .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
+                        .groupTuple(by: 0)
+                    final_report_mosdepth_ch = MOSDEPTH_QC.out
+                        .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
+                        .groupTuple(by: 0)
+                        .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
+                    final_report_with_qc_ch = final_report_base_ch
+                        .combine(final_report_samtools_ch, by: 0)
+                        .combine(final_report_mosdepth_ch, by: 0)
+                    BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC(final_report_with_qc_ch)
+                    final_report_data_ch = BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC.out
+                } else {
+                    BUILD_FINAL_REPORT_DATA(final_report_base_ch)
+                    final_report_data_ch = BUILD_FINAL_REPORT_DATA.out
+                }
             }
             CN_PUP_FINAL_REPORT(final_report_data_ch)
             CN_PUP_FINAL_REPORT.out.view { "CN-PUP final report: ${it[1]}" }
@@ -844,6 +872,67 @@ process BUILD_FINAL_REPORT_DATA_WITH_ALIGNMENT_QC {
     """
 }
 
+process BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/final_report/data" }, mode: 'copy', pattern: "final_report_data/*"
+
+    input:
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf)
+
+    output:
+    tuple val(patient_id), path("final_report_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p final_report_data final_report_matrices
+    cp "${binary_matrix}" final_report_matrices/mutation_binary.tsv
+
+    python "${projectDir}/bin/build_final_report_data.py" \
+      --patient-id "${patient_id}" \
+      --long-table "${long_table}" \
+      --matrices-dir "\$PWD/final_report_matrices" \
+      --cell-metadata "${cell_metadata}" \
+      --output-dir "\$PWD/final_report_data" \
+      --top-variant-limit "${params.final_report_top_variants}" \
+      --rarefaction-iterations "${params.final_report_rarefaction_iterations}"
+    """
+}
+
+process BUILD_FINAL_REPORT_DATA_FROM_FINAL_CALLS_WITH_ALIGNMENT_QC {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/final_report/data" }, mode: 'copy', pattern: "final_report_data/*"
+
+    input:
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), val(ref_fasta), val(cell_metadata), val(germline_mode), val(germline_vcf), val(bulk_bam), val(leukocyte_vcf), path(samtools_stats_files), path(mosdepth_files)
+
+    output:
+    tuple val(patient_id), path("final_report_data")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p final_report_data final_report_matrices final_alignment_qc
+    cp "${binary_matrix}" final_report_matrices/mutation_binary.tsv
+    cp ${samtools_stats_files} final_alignment_qc/
+    cp ${mosdepth_files} final_alignment_qc/
+
+    python "${projectDir}/bin/build_final_report_data.py" \
+      --patient-id "${patient_id}" \
+      --long-table "${long_table}" \
+      --matrices-dir "\$PWD/final_report_matrices" \
+      --cell-metadata "${cell_metadata}" \
+      --alignment-qc-dir "\$PWD/final_alignment_qc" \
+      --output-dir "\$PWD/final_report_data" \
+      --top-variant-limit "${params.final_report_top_variants}" \
+      --rarefaction-iterations "${params.final_report_rarefaction_iterations}"
+    """
+}
+
 process CN_PUP_FINAL_REPORT {
     tag "$patient_id"
     conda "envs/snv_report.yml"
@@ -1162,8 +1251,14 @@ process DELSIEVE_TREE_PNG_STAGE1 {
       exit 1
     fi
 
+    plot_tree="\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.plot_clipped.tree"
+    python "${projectDir}/bin/clip_tree_branch_lengths.py" \
+      --input "\$tree_file" \
+      --output "\$plot_tree" \
+      --summary "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.branch_length_clipping.tsv"
+
     "${params.delsieve_figtree}" -graphic PNG ${params.delsieve_figtree_extra_args} \\
-      "\$tree_file" \\
+      "\$plot_tree" \\
       "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.figtree.png" \\
       > "\$PWD/delsieve_stage1_tree_png/${patient_id}.stage1.mcc.figtree.log" 2>&1
 
@@ -1369,8 +1464,14 @@ process DELSIEVE_GENE_TREE_PNG_STAGE1 {
       exit 1
     fi
 
+    plot_tree="\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.plot_clipped.tree"
+    python "${projectDir}/bin/clip_tree_branch_lengths.py" \
+      --input "\$tree_file" \
+      --output "\$plot_tree" \
+      --summary "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.branch_length_clipping.tsv"
+
     "${params.delsieve_figtree}" -graphic PNG ${params.delsieve_figtree_extra_args} \\
-      "\$tree_file" \\
+      "\$plot_tree" \\
       "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.figtree.png" \\
       > "\$PWD/delsieve_stage1_gene_tree_png/${patient_id}.stage1.mutation_annotated.figtree.log" 2>&1
 
@@ -2134,12 +2235,13 @@ process BUILD_MUTATION_MATRICES {
     publishDir { "${params.outdir}/${patient_id}/matrices" }, mode: 'copy', pattern: "*.tsv"
 
     input:
-    tuple val(patient_id), path(final_vcfs)
+    tuple val(patient_id), path(final_vcfs), path(vep_tsvs)
 
     output:
     tuple val(patient_id), path("*.long.tsv"), path("*.binary_matrix.tsv"), path("*.altread_matrix.tsv"), path("*.refread_matrix.tsv"), path("*.summary.tsv")
 
     script:
+    def vep_args = vep_tsvs.collect { "--vep-tsv ${it}" }.join(' ')
     """
     set -euo pipefail
 
@@ -2147,6 +2249,7 @@ process BUILD_MUTATION_MATRICES {
       --patient-id "${patient_id}" \
       --caller monovar \
       --out-prefix "${patient_id}.monovar.final" \
+      ${vep_args} \
       ${final_vcfs}
     """
 }
@@ -2158,7 +2261,7 @@ process SNV_HTML_REPORT {
     publishDir { "${params.outdir}/${patient_id}/snv_report" }, mode: 'copy'
 
     input:
-    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table)
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), path(variant_flowcharts)
 
     output:
     tuple val(patient_id), path("${patient_id}.snv_report.html"), path("${patient_id}.monovar.maf")
@@ -2186,6 +2289,7 @@ process SNV_HTML_REPORT {
         altread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "altread_matrix.tsv"),
         refread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "refread_matrix.tsv"),
         summary_table=file.path(Sys.getenv("PWD"), "report_inputs", "summary.tsv"),
+        flowcharts_dir=normalizePath("${variant_flowcharts}", mustWork=TRUE),
         out_prefix="${patient_id}.monovar"
       )
     )'

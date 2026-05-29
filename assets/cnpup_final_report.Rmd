@@ -37,6 +37,7 @@ patient_summary <- read_optional("patient_summary.tsv")
 ctc_qc <- read_optional("ctc_qc_summary.tsv")
 sharing <- read_optional("sharing_spectrum.tsv")
 top_variants <- read_optional("top_recurrent_variants.tsv")
+population_flags <- read_optional("population_annotation_flags.tsv")
 tissue_overlap <- read_optional("ctc_tissue_overlap.tsv")
 rarefaction <- read_optional("rarefaction.tsv")
 warnings_tbl <- read_optional("warnings.tsv")
@@ -116,6 +117,7 @@ if (nrow(warnings_tbl)) {
 <div class="metric-card"><div class="label">Variant Rows</div><div class="value">`r metric_value("retained_variant_rows")`</div></div>
 <div class="metric-card"><div class="label">Max CTC Support</div><div class="value">`r metric_value("max_ctc_support_for_one_variant")`</div></div>
 <div class="metric-card"><div class="label">Metastasis Samples</div><div class="value">`r metric_value("metastasis_sample_count")`</div></div>
+<div class="metric-card"><div class="label">Common AF Flags</div><div class="value">`r metric_value("retained_variants_with_max_af_gt_1pct")`</div></div>
 </div>
 
 This report is designed to answer two things at once: whether the sequencing/calling data are technically usable per CTC, and what the retained SNVs say about CTC representativity, heterogeneity, and sampling depth.
@@ -199,6 +201,18 @@ if (nrow(sharing)) {
 ```{r top-recurrent}
 if (nrow(top_variants)) {
   datatable(top_variants, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+}
+```
+
+### Population Annotation Flags
+
+Variants in this table have VEP `MAX_AF > 1%` after filtering. They may survive when COSMIC retention is enabled, but they need manual review before being treated as tumor-specific CTC signal.
+
+```{r population-flags}
+if (nrow(population_flags)) {
+  datatable(population_flags, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+} else {
+  cat('<div class="callout">No retained variants had VEP MAX_AF above 1%.</div>')
 }
 ```
 

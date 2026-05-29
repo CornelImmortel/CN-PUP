@@ -8,6 +8,15 @@ import re
 from pathlib import Path
 
 
+IMPACT_RANK = {
+    "HIGH": 0,
+    "MODERATE": 1,
+    "LOW": 2,
+    "MODIFIER": 3,
+    "": 4,
+}
+
+
 def open_text(path):
     path = str(path)
     if path.endswith(".gz"):
@@ -64,6 +73,42 @@ def gene_from_info(info_dict):
     return "", "", "", ""
 
 
+def read_vep_annotations(paths):
+    annotations = {}
+    for path in paths:
+        with open(path, newline="", encoding="utf-8", errors="replace") as handle:
+            reader = csv.DictReader(
+                (line[1:] if line.startswith("#") else line for line in handle if not line.startswith("##")),
+                delimiter="\t",
+            )
+            for row in reader:
+                var_id = row.get("Uploaded_variation", "")
+                if not var_id:
+                    continue
+                impact = row.get("IMPACT", "")
+                score = (
+                    IMPACT_RANK.get(impact, 9),
+                    1 if row.get("SYMBOL", "") in {"", "-"} else 0,
+                    1 if row.get("Consequence", "") in {"", "-"} else 0,
+                    row.get("SYMBOL", ""),
+                )
+                previous = annotations.get(var_id)
+                if previous is None or score < previous["_score"]:
+                    annotations[var_id] = {
+                        "gene_symbol": "" if row.get("SYMBOL", "") == "-" else row.get("SYMBOL", ""),
+                        "gene_ensg": "" if row.get("Gene", "") == "-" else row.get("Gene", ""),
+                        "consequence": "" if row.get("Consequence", "") == "-" else row.get("Consequence", ""),
+                        "impact": "" if impact == "-" else impact,
+                        "hgvsc": "" if row.get("HGVSc", "") == "-" else row.get("HGVSc", ""),
+                        "hgvsp": "" if row.get("HGVSp", "") == "-" else row.get("HGVSp", ""),
+                        "existing_variation": "" if row.get("Existing_variation", "") == "-" else row.get("Existing_variation", ""),
+                        "max_af": "" if row.get("MAX_AF", "") == "-" else row.get("MAX_AF", ""),
+                        "max_af_pops": "" if row.get("MAX_AF_POPS", "") == "-" else row.get("MAX_AF_POPS", ""),
+                        "_score": score,
+                    }
+    return {key: {k: v for k, v in value.items() if k != "_score"} for key, value in annotations.items()}
+
+
 def infer_cell_id(path):
     name = Path(path).name
     for suffix in [
@@ -77,7 +122,7 @@ def infer_cell_id(path):
     return re.sub(r"\.vcf(\.gz)?$", "", name)
 
 
-def read_vcf(path, patient_id, caller):
+def read_vcf(path, patient_id, caller, annotations):
     cell_id = infer_cell_id(path)
     rows = []
     with open_text(path) as handle:
@@ -102,6 +147,11 @@ def read_vcf(path, patient_id, caller):
             refread, altread = parse_ad(sample_dict.get("AD", ""))
             gene_symbol, gene_ensg, consequence, impact = gene_from_info(info_dict)
             var_id = f"{chrom}:{pos}_{ref}/{alt}"
+            ann = annotations.get(var_id, {})
+            gene_symbol = ann.get("gene_symbol", gene_symbol)
+            gene_ensg = ann.get("gene_ensg", gene_ensg)
+            consequence = ann.get("consequence", consequence)
+            impact = ann.get("impact", impact)
             rows.append(
                 {
                     "patient_id": patient_id,
@@ -126,6 +176,11 @@ def read_vcf(path, patient_id, caller):
                     "gene_ensg": gene_ensg,
                     "consequence": consequence,
                     "impact": impact,
+                    "hgvsc": ann.get("hgvsc", ""),
+                    "hgvsp": ann.get("hgvsp", ""),
+                    "existing_variation": ann.get("existing_variation", ""),
+                    "max_af": ann.get("max_af", ""),
+                    "max_af_pops": ann.get("max_af_pops", ""),
                 }
             )
     return rows
@@ -151,12 +206,14 @@ def main():
     parser.add_argument("--patient-id", required=True)
     parser.add_argument("--caller", default="monovar")
     parser.add_argument("--out-prefix", required=True)
+    parser.add_argument("--vep-tsv", action="append", default=[], help="Optional VEP TSV annotation file to merge into the output long table. May be repeated.")
     parser.add_argument("vcfs", nargs="+")
     args = parser.parse_args()
 
+    annotations = read_vep_annotations([Path(p) for p in args.vep_tsv])
     rows = []
     for vcf in args.vcfs:
-        rows.extend(read_vcf(vcf, args.patient_id, args.caller))
+        rows.extend(read_vcf(vcf, args.patient_id, args.caller, annotations))
 
     rows.sort(key=lambda r: (r["ctc_id"], r["CHROM"], int(r["POS"]), r["REF"], r["ALT"]))
     out_prefix = Path(args.out_prefix)
@@ -165,6 +222,7 @@ def main():
     long_fields = [
         "patient_id", "ctc_id", "cell_id", "sample_name", "caller", "var_id", "CHROM", "POS", "REF", "ALT",
         "QUAL", "FILTER", "GT", "DP", "AD", "refread", "altread", "GQ", "gene_symbol", "gene_ensg", "consequence", "impact",
+        "hgvsc", "hgvsp", "existing_variation", "max_af", "max_af_pops",
     ]
     write_tsv(out_prefix.with_suffix(".long.tsv"), rows, long_fields)
 
