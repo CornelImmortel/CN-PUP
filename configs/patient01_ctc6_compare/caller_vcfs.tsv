@@ -1,0 +1,13 @@
+patient_id	cell_id	caller	vcf_path	sccaller_mode
+patient01_ctc6_compare	CTC1	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617611/SRR8617611.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC1	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617611/SRR8617611.deepvariant_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC2	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617608/SRR8617608.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC2	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617608/SRR8617608.deepvariant_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC3	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617609/SRR8617609.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC3	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617609/SRR8617609.deepvariant_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC4	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617612/SRR8617612.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC4	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617612/SRR8617612.deepvariant_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC5	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617613/SRR8617613.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC5	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617613/SRR8617613.deepvariant_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC6	haplotypecaller	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/haplotypecaller/patient_01/SRR8617526/SRR8617526.haplotypecaller.filtered_snpEff.ann.vcf.gz
+patient01_ctc6_compare	CTC6	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_01/SRR8617526/SRR8617526.deepvariant_snpEff.ann.vcf.gz

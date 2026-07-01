@@ -1,0 +1,49 @@
+patients: configs/patient01_ctc6_compare/patients.tsv
+caller_vcfs: configs/patient01_ctc6_compare/caller_vcfs.tsv
+outdir: results
+
+# Caller branches: MonoVar and SCcaller run natively; HaplotypeCaller and
+# DeepVariant are imported from the existing Sarek variant-calling output.
+run_monovar: true
+run_sccaller: true
+run_external_callers: true
+run_comparison: true
+run_caller_scorecard: true
+
+# Kept minimal/fast for validating the new scorecard stage against the old
+# vcf_bench reference numbers (see caller_choice_objective_report). Turn
+# these on for a full patient-level run once the scorecard is validated.
+run_vep_filter: false
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+# MonoVar.
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+monovar_background_ctc_count: 5
+monovar_background_seed: 13
+
+# SCcaller. Both paths below are the actual ones used for this exact 6-CTC
+# comparison previously (documented in vcf_bench/variant_caller_comparison.qmd,
+# "## SCcaller" section) -- not a guess. sccaller_hsnp_vcf is a pre-built
+# heterozygous-SNP VCF for the SRR8617606 bulk sample (GATK HaplotypeCaller
+# GVCF on the bulk BAM, filtered to biallelic het SNPs with a dbSNP155-common
+# rsID -- see vcf_bench/SCcaller/sccaller_pipeline_1_v1.0.0.sh sub-step 12).
+# Still worth a quick `ls`/`bcftools view -h` check that the file is still
+# there before running, since it lives outside any git-tracked location.
+sccaller_script: /tzu-share-2/users/students/cornelusp/sccaller/SCcaller-core/sccaller_v2.0.0.py
+sccaller_cpu: 8
+sccaller_bias: 0.75
+sccaller_engine: samtools
+sccaller_mode: external_bulk
+sccaller_hsnp_vcf: /tzu-share-2/users/students/cornelusp/sccaller/ht/SRR8617606.hg38.hsnp.biallelic.dbsnp155common.vcf
+
+# Variant filtering (matches the original vcf_bench comparison thresholds).
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0

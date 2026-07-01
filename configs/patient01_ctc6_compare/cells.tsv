@@ -1,0 +1,7 @@
+patient_id	cell_id	bam_path	cell_type
+patient01_ctc6_compare	CTC1	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617611.sorted.bam	ctc
+patient01_ctc6_compare	CTC2	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617608.sorted.bam	ctc
+patient01_ctc6_compare	CTC3	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617609.sorted.bam	ctc
+patient01_ctc6_compare	CTC4	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617612.sorted.bam	ctc
+patient01_ctc6_compare	CTC5	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617613.sorted.bam	ctc
+patient01_ctc6_compare	CTC6	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617526.sorted.bam	ctc

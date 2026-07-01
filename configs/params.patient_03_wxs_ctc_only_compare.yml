@@ -4,6 +4,24 @@ outdir: results
 run_monovar: false
 run_external_callers: true
 run_comparison: true
+run_caller_scorecard: true
+
+# SCcaller deferred for patient_03 (author's decision, 2026-07-01): no
+# pre-built hSNP VCF exists yet for this patient's bulk sample (SRR8617664),
+# unlike patient01 which has one already. Scorecard here stays at 3 callers
+# (MonoVar, HaplotypeCaller, DeepVariant) until that's worth building.
+# sccaller_script is filled in for whenever this is revisited (same
+# already-deployed tool used for the patient01 comparison, see
+# vcf_bench/variant_caller_comparison.qmd) -- sccaller_hsnp_vcf is
+# intentionally left blank, do not enable run_sccaller without setting it.
+run_sccaller: false
+sccaller_script: /tzu-share-2/users/students/cornelusp/sccaller/SCcaller-core/sccaller_v2.0.0.py
+sccaller_cpu: 8
+sccaller_bias: 0.75
+sccaller_engine: samtools
+sccaller_mode: external_bulk
+sccaller_hsnp_vcf: ""
+
 run_delsieve_prep: true
 run_delsieve: false
 run_delsieve_from_existing: false

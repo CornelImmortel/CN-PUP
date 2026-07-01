@@ -20,6 +20,7 @@ params.run_monovar = params.run_monovar ?: false
 params.run_sccaller = params.run_sccaller ?: false
 params.run_external_callers = params.run_external_callers ?: false
 params.run_comparison = params.run_comparison ?: false
+params.run_caller_scorecard = params.run_caller_scorecard ?: false
 params.run_delsieve_prep = params.run_delsieve_prep ?: false
 params.run_delsieve = params.run_delsieve ?: false
 params.run_delsieve_from_existing = params.run_delsieve_from_existing ?: false
@@ -379,6 +380,11 @@ workflow {
             .groupTuple(by: 0)
         BUILD_CALLER_COMPARISON(comparison_by_patient_ch)
         BUILD_CALLER_COMPARISON.out.view { "Caller comparison matrices: ${it[2]}" }
+
+        if (params.run_caller_scorecard) {
+            BUILD_CALLER_SCORECARD(BUILD_CALLER_COMPARISON.out)
+            BUILD_CALLER_SCORECARD.out.view { "Caller scorecard: ${it[1]}" }
+        }
 
         if (params.run_final_report) {
             if (params.run_vep_filter) {
@@ -808,6 +814,30 @@ process BUILD_CALLER_COMPARISON {
     python "${projectDir}/bin/mutation_matrix/06_overlap_qc.py" \\
       --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
       --output "\$PWD/reports/overlap_qc.tsv"
+    """
+}
+
+process BUILD_CALLER_SCORECARD {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/caller_comparison/reports" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(long_table), path(matrices), path(ctc_scite_inputs), path(overlap_qc)
+
+    output:
+    tuple val(patient_id), path("caller_scorecard.tsv"), path("statistical_tests.tsv"), path("scorecard_summary.md")
+
+    script:
+    """
+    set -euo pipefail
+
+    mkdir -p matrix_dir
+    cp ${matrices} matrix_dir/
+
+    python "${projectDir}/bin/mutation_matrix/08_caller_scorecard.py" \\
+      --matrix-dir "\$PWD/matrix_dir" \\
+      --output-dir "\$PWD"
     """
 }
 
