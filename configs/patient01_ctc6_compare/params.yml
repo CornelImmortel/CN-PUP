@@ -1,3 +1,17 @@
+# RUN configs/patient01_ctc6_compare/params_leukocyte_prep.yml FIRST.
+# patients.tsv now uses germline_mode=combined (bulk blood + leukocyte
+# subtraction, added 2026-07-03: patient01 has a 7th sample, SRR8617667,
+# jointly MonoVar-called with the 6 CTCs in the original
+# vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf comparison). The native
+# MonoVar branch derives its leukocyte exclusion live from this run's own
+# joint call (needed main.nf changes -- see MERGE_MONOVAR_GERMLINE_EXCLUSION
+# and the 'combined' handling in the exclusion_ch wiring, both new/untested).
+# SCcaller/HaplotypeCaller/DeepVariant instead read patients.tsv's
+# leukocyte_vcf field as a plain existing file, which is why the prep run
+# has to happen first -- it produces
+# results/patient01_ctc6_compare/split_calls/monovar/leuko.monovar.split.vcf.
+# With -resume, this run reuses that pass's MonoVar result rather than
+# recomputing it (same monovar_bam_list/patients.tsv in both).
 patients: configs/patient01_ctc6_compare/patients.tsv
 caller_vcfs: configs/patient01_ctc6_compare/caller_vcfs.tsv
 outdir: results

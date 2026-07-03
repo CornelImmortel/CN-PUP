@@ -193,6 +193,51 @@ Supported/recognized germline modes include:
 - `combined`
 - `no_germline`
 
+**2026-07-03: `combined` mode fixed for the native MonoVar branch.** Previously
+`combined` (bulk blood + leukocyte) only worked for
+`STANDARDIZE_EXTERNAL_CALLERS`/`STANDARDIZE_INTERNAL_SCCALLER` (their bash
+logic already merges both sources correctly via `bcftools view -G` + concat +
+sort + `norm -d exact`). The native `RUN_MONOVAR`/`FILTER_MONOVAR_AND_SUBTRACT_GERMLINE`
+branch only ever checked `germline_mode == 'precomputed_vcf'` XOR
+`== 'joint_monovar_leukocyte'` -- never both, never `'combined'` -- so a
+patient with `germline_mode: combined` and `run_monovar: true` got **no**
+germline exclusion applied to MonoVar's own calls at all (this is why
+`patients.patient_03_wxs_ctc_only_compare.tsv`, which does use `combined`,
+sets `run_monovar: false` and imports MonoVar externally instead -- it never
+hit this gap).
+
+Fix: `precomputed_input_ch` and `leukocyte_exclusion_input_ch` now both also
+fire for `germline_mode == 'combined'`; when both fire for the same patient,
+a new process `MERGE_MONOVAR_GERMLINE_EXCLUSION` (added right after
+`PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION` in `main.nf`) merges the bulk and
+leukocyte exclusion VCFs into one (same `bcftools view -G` + concat + sort +
+`norm -d exact` pattern already used by `STANDARDIZE_EXTERNAL_CALLERS`)
+before `FILTER_MONOVAR_AND_SUBTRACT_GERMLINE` runs. Patients using
+`precomputed_vcf`-only or `joint_monovar_leukocyte`-only still pass through
+unchanged (implemented via `.join(..., remainder: true)` + `.branch{}` on
+`PREPARE_PRECOMPUTED_GERMLINE.out`/`PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out`,
+routing to `both`/`bulk_only`/`leuko_only`).
+
+**This is new, unexecuted code** -- traced carefully against the existing
+`STANDARDIZE_EXTERNAL_CALLERS` pattern and Nextflow channel semantics, but
+never run. First real run: `configs/patient01_ctc6_compare/` was switched to
+`germline_mode: combined` for exactly this reason (patient01 has a leukocyte
+sample, `SRR8617667`, jointly MonoVar-called with the 6 CTCs in the original
+`vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf`). Check
+`results/patient01_ctc6_compare/germline_exclusion/*.combined_germline_exclusion.log`
+and the resulting VCF's record count after running -- it should be roughly
+(bulk count + leukocyte count − overlap), not wildly larger or smaller, as a
+basic sanity check that the merge worked as intended.
+
+That config needs a **two-pass run**: `params_leukocyte_prep.yml` first
+(MonoVar-only, produces `split_calls/monovar/leuko.monovar.split.vcf`, which
+`patients.tsv`'s `leukocyte_vcf` field points at), then `params.yml`
+(`-resume` reuses the first pass's MonoVar result since both share the same
+`monovar_bam_list`/`patients.tsv`). The external/SCcaller `combined`-mode
+subtraction needs `leukocyte_vcf` to already be a real file, unlike the
+native MonoVar branch which derives it live -- see the comment block at the
+top of `configs/patient01_ctc6_compare/params.yml`.
+
 ## Important Parameters
 
 Defaults live in `nextflow.config`; many are duplicated in params YAML files.
@@ -311,6 +356,18 @@ git-tracked location and could have been cleaned up.
 Kept minimal on purpose (`run_vep_filter`/`run_snv_report`/`run_final_report`/
 `run_bam_qc`/`run_delsieve*` all `false`) so this run is fast and focused on
 validating the scorecard stage, not a full patient report.
+
+**2026-07-03: switched to `germline_mode: combined` (bulk + leukocyte).**
+Patient01 has a leukocyte sample (`SRR8617667`) already jointly MonoVar-called
+with the 6 CTCs in `vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf` -- missed
+in the original config. Added it to `bams.txt`/`cells.tsv` (`cell_id: leuko`)
+and switched `patients.tsv` off `precomputed_vcf` onto `combined`. This
+required a `main.nf` fix (see the germline-mode section above) and makes this
+a **two-pass run**: `configs/patient01_ctc6_compare/params_leukocyte_prep.yml`
+first, then `params.yml`. Read the comment block at the top of `params.yml`
+before running -- getting the pass order wrong will make the external-caller/
+SCcaller side of the subtraction silently do less than intended (or the run
+may fail outright if `leukocyte_vcf` doesn't resolve).
 
 ### Tzu Patient PAT-2026-03-00003
 

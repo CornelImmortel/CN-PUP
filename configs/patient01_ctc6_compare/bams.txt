@@ -4,3 +4,4 @@
 /tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617612.sorted.bam
 /tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617613.sorted.bam
 /tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617526.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617667.sorted.bam

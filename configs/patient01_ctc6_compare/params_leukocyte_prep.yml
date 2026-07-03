@@ -1,0 +1,36 @@
+# Pass 1 of 2 for this patient: MonoVar-only, just to produce
+# results/patient01_ctc6_compare/split_calls/monovar/leuko.monovar.split.vcf,
+# which params.yml's `leukocyte_vcf` field then needs to exist as a real file
+# for the SCcaller/HaplotypeCaller/DeepVariant side of `combined`-mode
+# subtraction (the native MonoVar branch derives its own leukocyte exclusion
+# live within a single run and doesn't need this file, but the external/SCcaller
+# processes read leukocyte_vcf as a plain path and need it to already exist).
+#
+# Run this FIRST, then run params.yml. Because both share the same
+# monovar_bam_list/patients.tsv, `-resume` on the params.yml run will reuse
+# this pass's MonoVar result instead of recomputing it.
+patients: configs/patient01_ctc6_compare/patients.tsv
+outdir: results
+
+run_monovar: true
+run_sccaller: false
+run_external_callers: false
+run_comparison: false
+run_caller_scorecard: false
+run_vep_filter: false
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+monovar_background_ctc_count: 5
+monovar_background_seed: 13
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0

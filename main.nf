@@ -195,7 +195,7 @@ workflow {
             tuple(patient_id, ref_fasta, germline_mode, germline_vcf)
         }
 
-        precomputed_input_ch = checked_ch.filter { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check -> germline_mode == 'precomputed_vcf' }
+        precomputed_input_ch = checked_ch.filter { patient_id, ref_fasta, monovar_bam_list, cell_metadata, germline_mode, germline_vcf, bulk_bam, leukocyte_bam, leukocyte_vcf, input_check -> germline_mode == 'precomputed_vcf' || germline_mode == 'combined' }
         PREPARE_PRECOMPUTED_GERMLINE(precomputed_input_ch)
         PREPARE_PRECOMPUTED_GERMLINE.out.view { "Precomputed germline exclusion VCF: ${it[1]}" }
 
@@ -230,7 +230,7 @@ workflow {
         }
 
         leukocyte_exclusion_input_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
-            germline_mode == 'joint_monovar_leukocyte' && isLeukocyteCell(cell_id)
+            (germline_mode == 'joint_monovar_leukocyte' || germline_mode == 'combined') && isLeukocyteCell(cell_id)
         }
         subset_leukocyte_exclusion_input_ch = SPLIT_MONOVAR_WBC_SUBSET.out
             .flatMap { patient_id, split_vcfs, sample_map, split_log, ref_fasta ->
@@ -247,7 +247,30 @@ workflow {
         PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION(leukocyte_exclusion_all_ch)
         PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out.view { "MonoVar leukocyte exclusion VCF: ${it[1]}" }
 
-        exclusion_ch = PREPARE_PRECOMPUTED_GERMLINE.out.mix(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out)
+        // 'combined' mode makes both PREPARE_PRECOMPUTED_GERMLINE and
+        // PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION fire for the same patient; a plain
+        // mix()+combine(by:0) would pair each cell with EACH exclusion source
+        // separately (two independent single-source subtractions), not a real
+        // bulk+leukocyte combined exclusion. Join and merge those cases instead;
+        // 'precomputed_vcf'-only and 'joint_monovar_leukocyte'-only patients pass
+        // through unchanged (only one side of the join is populated for them).
+        exclusion_join_ch = PREPARE_PRECOMPUTED_GERMLINE.out
+            .join(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out, by: 0, remainder: true)
+            .branch { patient_id, bulk_vcf, bulk_tbi, bulk_ref, bulk_source, leuko_vcf, leuko_tbi, leuko_ref, leuko_source ->
+                both: bulk_vcf != null && leuko_vcf != null
+                    return tuple(patient_id, bulk_vcf, bulk_tbi, leuko_vcf, leuko_tbi, bulk_ref)
+                bulk_only: bulk_vcf != null
+                    return tuple(patient_id, bulk_vcf, bulk_tbi, bulk_ref, bulk_source)
+                leuko_only: true
+                    return tuple(patient_id, leuko_vcf, leuko_tbi, leuko_ref, leuko_source)
+            }
+
+        MERGE_MONOVAR_GERMLINE_EXCLUSION(exclusion_join_ch.both)
+        MERGE_MONOVAR_GERMLINE_EXCLUSION.out.view { "Combined bulk+leukocyte germline exclusion VCF: ${it[1]}" }
+
+        exclusion_ch = exclusion_join_ch.bulk_only
+            .mix(exclusion_join_ch.leuko_only)
+            .mix(MERGE_MONOVAR_GERMLINE_EXCLUSION.out)
 
         target_split_ch = split_with_info_ch.filter { patient_id, cell_id, split_vcf, ref_fasta, germline_mode, germline_vcf ->
             !isLeukocyteCell(cell_id)
@@ -1960,6 +1983,48 @@ process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
 
     echo -n "Leukocyte exclusion variants after normalization: " >> "\$log"
     bcftools view -H "\$norm" | wc -l >> "\$log"
+    """
+}
+
+process MERGE_MONOVAR_GERMLINE_EXCLUSION {
+    tag "$patient_id"
+    conda "envs/bcftools.yml"
+    publishDir { "${params.outdir}/${patient_id}/germline_exclusion" }, mode: 'copy', pattern: "*.vcf.gz*"
+    publishDir { "${params.outdir}/${patient_id}/logs" }, mode: 'copy', pattern: "*.combined_germline_exclusion.log"
+
+    input:
+    tuple val(patient_id), path(bulk_vcf), path(bulk_tbi), path(leuko_vcf), path(leuko_tbi), val(ref_fasta)
+
+    output:
+    tuple val(patient_id), path("${patient_id}.combined_bulk_leukocyte.vcf.gz"), path("${patient_id}.combined_bulk_leukocyte.vcf.gz.tbi"), val(ref_fasta), val("combined_bulk_leukocyte")
+
+    script:
+    """
+    set -euo pipefail
+
+    log="${patient_id}.combined_germline_exclusion.log"
+    echo "Bulk exclusion source: ${bulk_vcf}" > "\$log"
+    echo "Leukocyte exclusion source: ${leuko_vcf}" >> "\$log"
+
+    # bulk_vcf and leuko_vcf come from different single-sample callsets (bulk
+    # DeepVariant vs. leukocyte MonoVar split), so they don't share sample
+    # columns, and both are already normalized upstream (PREPARE_PRECOMPUTED_GERMLINE
+    # / PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION each run bcftools norm -f ref -m -any).
+    # Same pattern as STANDARDIZE_EXTERNAL_CALLERS' multi-source exclusion merge:
+    # drop genotypes to a pure sites union, concat, sort, dedupe exact duplicates.
+    bcftools view -G "${bulk_vcf}" -Oz -o bulk.sites.vcf.gz
+    tabix -f -p vcf bulk.sites.vcf.gz
+    bcftools view -G "${leuko_vcf}" -Oz -o leuko.sites.vcf.gz
+    tabix -f -p vcf leuko.sites.vcf.gz
+
+    bcftools concat -a bulk.sites.vcf.gz leuko.sites.vcf.gz -Ou \
+    | bcftools sort -Ou \
+    | bcftools norm -d exact -Oz -o "${patient_id}.combined_bulk_leukocyte.vcf.gz" \
+      2>> "\$log"
+    tabix -f -p vcf "${patient_id}.combined_bulk_leukocyte.vcf.gz"
+
+    echo -n "Combined bulk+leukocyte exclusion variants: " >> "\$log"
+    bcftools view -H "${patient_id}.combined_bulk_leukocyte.vcf.gz" | wc -l >> "\$log"
     """
 }
 
