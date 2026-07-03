@@ -290,7 +290,7 @@ if (nrow(long) > 0) {
 ```{r circos, fig.height=8, fig.width=8}
 if (nrow(long) > 0) {
   circos.clear()
-  circos.par(start.degree = 90, gap.degree = 1, track.margin = c(0.01, 0.01))
+  circos.par(start.degree = 90, gap.degree = 1, track.margin = c(0.01, 0.01), cell.padding = c(0.02, 0, 0.02, 0))
   chrom_df <- long %>%
     mutate(chr_clean = str_replace(CHROM, "^chr", "")) %>%
     group_by(chr_clean) %>%
