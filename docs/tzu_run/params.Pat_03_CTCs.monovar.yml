@@ -1,5 +1,5 @@
 patients: docs/tzu_run/patients.Pat_03_CTCs.monovar.tsv
-outdir: results
+outdir: results_good_ctcs
 
 # Execution/reporting.
 enable_weblog: true

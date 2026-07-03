@@ -52,10 +52,9 @@ nextflow run main.nf \
 
 Weblog is set to `http://localhost:8606` (the original full-cohort
 Patient 03 run in this directory uses 8605, so both can run without
-clashing). Output goes to `results/PAT-2026-03-00003/...` per the
-pipeline's standard layout, same as the original run — set a different
-`outdir` in `params.Pat_03_CTCs.monovar.yml` first if you want to keep
-this subset's output separate from the full-cohort run's results.
+clashing). Output goes to `results_good_ctcs/PAT-2026-03-00003/...`, kept
+separate from the original full-cohort run's `results/PAT-2026-03-00003/...`
+via a dedicated `outdir`.
 
 ## Files
 
