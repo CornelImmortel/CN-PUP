@@ -1,0 +1,7 @@
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_4/alignments/dna/BFX-2026-04-00037.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_5/alignments/dna/BFX-2026-04-00038.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_6/alignments/dna/BFX-2026-04-00039.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_7/alignments/dna/BFX-2026-04-00040.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_8/alignments/dna/BFX-2026-04-00041.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_11/alignments/dna/BFX-2026-04-00044.redux.bam
+/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00004_12/alignments/dna/BFX-2026-04-00045.redux.bam
