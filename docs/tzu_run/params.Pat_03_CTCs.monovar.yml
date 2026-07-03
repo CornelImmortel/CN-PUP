@@ -3,7 +3,7 @@ outdir: results_good_ctcs
 
 # Execution/reporting.
 enable_weblog: true
-weblog_url: http://localhost:8606
+weblog_url: http://localhost:8605
 
 # Caller branches. This run has MonoVar inputs only; SCcaller and external
 # caller branches need their input files filled before enabling.

@@ -50,11 +50,13 @@ nextflow run main.nf \
   -resume
 ```
 
-Weblog is set to `http://localhost:8606` (the original full-cohort
-Patient 03 run in this directory uses 8605, so both can run without
-clashing). Output goes to `results_good_ctcs/PAT-2026-03-00003/...`, kept
-separate from the original full-cohort run's `results/PAT-2026-03-00003/...`
-via a dedicated `outdir`.
+Weblog is set to `http://localhost:8605` — this is a shared listener on
+the node (feeds the internal "All Users" pipeline dashboard), not a
+per-run port, so it intentionally matches the original full-cohort
+Patient 03 run's weblog URL. Output goes to
+`results_good_ctcs/PAT-2026-03-00003/...`, kept separate from the
+original full-cohort run's `results/PAT-2026-03-00003/...` via a
+dedicated `outdir`.
 
 ## Files
 
