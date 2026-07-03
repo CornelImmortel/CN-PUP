@@ -2384,7 +2384,7 @@ process SNV_HTML_REPORT {
         altread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "altread_matrix.tsv"),
         refread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "refread_matrix.tsv"),
         summary_table=file.path(Sys.getenv("PWD"), "report_inputs", "summary.tsv"),
-        flowcharts_dir=normalizePath("${variant_flowcharts}", mustWork=TRUE),
+        flowcharts_dir=normalizePath(file.path(Sys.getenv("PWD"), "${variant_flowcharts}"), mustWork=TRUE),
         out_prefix="${patient_id}.monovar"
       )
     )'
