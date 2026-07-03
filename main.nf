@@ -254,15 +254,26 @@ workflow {
         // bulk+leukocyte combined exclusion. Join and merge those cases instead;
         // 'precomputed_vcf'-only and 'joint_monovar_leukocyte'-only patients pass
         // through unchanged (only one side of the join is populated for them).
+        // join(remainder:true) collapses an entirely-empty upstream channel (e.g.
+        // PREPARE_PRECOMPUTED_GERMLINE never firing for a germline_mode that isn't
+        // 'precomputed_vcf'/'combined') into a single null instead of one null per
+        // missing field, which breaks positional destructuring. Tag + mix +
+        // groupTuple instead so the branch closure sees a predictable shape
+        // regardless of which side(s) actually emitted for a given patient.
         exclusion_join_ch = PREPARE_PRECOMPUTED_GERMLINE.out
-            .join(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out, by: 0, remainder: true)
-            .branch { patient_id, bulk_vcf, bulk_tbi, bulk_ref, bulk_source, leuko_vcf, leuko_tbi, leuko_ref, leuko_source ->
-                both: bulk_vcf != null && leuko_vcf != null
-                    return tuple(patient_id, bulk_vcf, bulk_tbi, leuko_vcf, leuko_tbi, bulk_ref)
-                bulk_only: bulk_vcf != null
-                    return tuple(patient_id, bulk_vcf, bulk_tbi, bulk_ref, bulk_source)
+            .map { patient_id, vcf, tbi, ref_fasta, source -> tuple(patient_id, 'bulk', vcf, tbi, ref_fasta, source) }
+            .mix(PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out
+                .map { patient_id, vcf, tbi, ref_fasta, source -> tuple(patient_id, 'leuko', vcf, tbi, ref_fasta, source) })
+            .groupTuple(by: 0)
+            .branch { patient_id, kinds, vcfs, tbis, refs, sources ->
+                def bulk_idx = kinds.indexOf('bulk')
+                def leuko_idx = kinds.indexOf('leuko')
+                both: bulk_idx >= 0 && leuko_idx >= 0
+                    return tuple(patient_id, vcfs[bulk_idx], tbis[bulk_idx], vcfs[leuko_idx], tbis[leuko_idx], refs[bulk_idx])
+                bulk_only: bulk_idx >= 0
+                    return tuple(patient_id, vcfs[bulk_idx], tbis[bulk_idx], refs[bulk_idx], sources[bulk_idx])
                 leuko_only: true
-                    return tuple(patient_id, leuko_vcf, leuko_tbi, leuko_ref, leuko_source)
+                    return tuple(patient_id, vcfs[leuko_idx], tbis[leuko_idx], refs[leuko_idx], sources[leuko_idx])
             }
 
         MERGE_MONOVAR_GERMLINE_EXCLUSION(exclusion_join_ch.both)
