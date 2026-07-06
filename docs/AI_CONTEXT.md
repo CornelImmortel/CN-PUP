@@ -218,16 +218,45 @@ unchanged (implemented via `.join(..., remainder: true)` + `.branch{}` on
 `PREPARE_PRECOMPUTED_GERMLINE.out`/`PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION.out`,
 routing to `both`/`bulk_only`/`leuko_only`).
 
-**This is new, unexecuted code** -- traced carefully against the existing
-`STANDARDIZE_EXTERNAL_CALLERS` pattern and Nextflow channel semantics, but
-never run. First real run: `configs/patient01_ctc6_compare/` was switched to
-`germline_mode: combined` for exactly this reason (patient01 has a leukocyte
-sample, `SRR8617667`, jointly MonoVar-called with the 6 CTCs in the original
-`vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf`). Check
+**This is new code, executed once (2026-07-06) and found to be correct at
+the mechanics level, but with a sample-identity error in that first run --
+see below.** Traced carefully against the existing
+`STANDARDIZE_EXTERNAL_CALLERS` pattern and Nextflow channel semantics before
+running. First run: `configs/patient01_ctc6_compare/` was switched to
+`germline_mode: combined` for exactly this reason. Check
 `results/patient01_ctc6_compare/germline_exclusion/*.combined_germline_exclusion.log`
 and the resulting VCF's record count after running -- it should be roughly
 (bulk count + leukocyte count − overlap), not wildly larger or smaller, as a
 basic sanity check that the merge worked as intended.
+
+**2026-07-06 correction: the leukocyte sample was wrong.** `SRR8617667` was
+used as "patient01's leukocyte" based on it being the 7th sample column in
+`vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf` (labelled "leukocyte" in that
+analysis's own report,
+`vcf_bench/VCFs/comparisons/leukocyte_monovar_analysis/patient01_leukocyte_monovar_report.md`).
+Checking SRA metadata directly (`Documents/Playground/SraRunTable.csv`)
+shows `SRR8617667` is actually **Patient 02's CTC9** (`isolate=Patient 02`,
+`tissue=Circulating tumor cells 9`) -- a pre-existing mislabeling in the
+original `vcf_bench` analysis, inherited here without independently
+cross-checking SRA metadata. Patient01's real leukocyte sample is
+**`SRR8617610`** (`isolate=Patient 01`, `tissue=Single leokucyte [sic]`,
+`Assay Type=WXS`). All three `configs/patient01_ctc6_compare/` files
+(`bams.txt`, `cells.tsv`, `patients.tsv`) have been corrected to
+`SRR8617610`. The 2026-07-06 Pass 1 run (MonoVar + germline exclusion) used
+the wrong sample -- it subtracted Patient 02 tumor-cell variants from
+Patient 01's CTC calls, not a real background/germline set -- and needs to
+be rerun with the corrected config before Pass 2. Also check
+`vcf_bench/VCFs/comparisons/leukocyte_monovar_analysis/` and any thesis text
+built on it (including drafted methods text) for the same mislabeling before
+citing its numbers.
+
+Also worth double-checking: all patient01 samples used here are confirmed
+WXS (not WGS) per the same SraRunTable -- `SRR8617606` (bulk),
+`SRR8617611/608/609/612/613/526` (the 6 CTCs), and `SRR8617610` (leukocyte)
+all show `Assay Type=WXS`. Note `PRJNA448888` also has WGS runs for some of
+these same patient01 samples under different SRR accessions (e.g.
+`SRR8617596`, `SRR8617605`) -- don't mix them in by accident when sourcing
+future samples from this project.
 
 That config needs a **two-pass run**: `params_leukocyte_prep.yml` first
 (MonoVar-only, produces `split_calls/monovar/leuko.monovar.split.vcf`, which
@@ -358,16 +387,22 @@ Kept minimal on purpose (`run_vep_filter`/`run_snv_report`/`run_final_report`/
 validating the scorecard stage, not a full patient report.
 
 **2026-07-03: switched to `germline_mode: combined` (bulk + leukocyte).**
-Patient01 has a leukocyte sample (`SRR8617667`) already jointly MonoVar-called
-with the 6 CTCs in `vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf` -- missed
-in the original config. Added it to `bams.txt`/`cells.tsv` (`cell_id: leuko`)
-and switched `patients.tsv` off `precomputed_vcf` onto `combined`. This
-required a `main.nf` fix (see the germline-mode section above) and makes this
-a **two-pass run**: `configs/patient01_ctc6_compare/params_leukocyte_prep.yml`
+Patient01 has a leukocyte sample already jointly MonoVar-called with the 6
+CTCs in `vcf_bench/VCFs/patient01_ctcleuko_monovar.vcf` -- missed in the
+original config. Added it to `bams.txt`/`cells.tsv` (`cell_id: leuko`) and
+switched `patients.tsv` off `precomputed_vcf` onto `combined`. This required
+a `main.nf` fix (see the germline-mode section above) and makes this a
+**two-pass run**: `configs/patient01_ctc6_compare/params_leukocyte_prep.yml`
 first, then `params.yml`. Read the comment block at the top of `params.yml`
 before running -- getting the pass order wrong will make the external-caller/
 SCcaller side of the subtraction silently do less than intended (or the run
 may fail outright if `leukocyte_vcf` doesn't resolve).
+
+**2026-07-06 correction: `SRR8617610` is the correct leukocyte sample, not
+`SRR8617667`.** `SRR8617667` (used above and in the first, now-invalid run)
+is actually Patient 02's CTC9 per SRA metadata -- see the fuller note further
+up this file. All three config files now use `SRR8617610`; the 2026-07-06
+run needs to be redone from Pass 1.
 
 ### Tzu Patient PAT-2026-03-00003
 
