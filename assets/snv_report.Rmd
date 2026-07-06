@@ -14,6 +14,7 @@ params:
   refread_matrix: ""
   summary_table: ""
   flowcharts_dir: ""
+  breadth_summary: ""
   out_prefix: "snv_report"
 ---
 
@@ -114,6 +115,31 @@ private_variants <- names(variant_shared_n[variant_shared_n == 1])
 shared2_variants <- names(variant_shared_n[variant_shared_n >= 2])
 all_shared_variants <- names(variant_shared_n[variant_shared_n == length(cell_ids)])
 
+# breadth_summary is an optional reports/<patient>.breadth_summary.tsv from
+# SUMMARIZE_BREADTH_QC (only produced when run_bam_qc=true); an empty string
+# means it wasn't computed for this run.
+breadth_summary_path <- params$breadth_summary
+has_breadth <- !is.null(breadth_summary_path) && nzchar(breadth_summary_path) && file.exists(breadth_summary_path)
+top_ann <- NULL
+if (has_breadth) {
+  breadth_raw <- read_tsv(breadth_summary_path, show_col_types = FALSE)
+  breadth_cols <- names(breadth_raw)[str_detect(names(breadth_raw), "^breadth_")]
+  breadth_col <- c(breadth_cols[str_detect(breadth_cols, "20")], breadth_cols)[1]
+  if (!is.na(breadth_col) && "cell_id" %in% names(breadth_raw)) {
+    breadth_lookup <- setNames(breadth_raw[[breadth_col]], breadth_raw$cell_id)
+    # mat's columns are "<cell_id>__<caller>"; breadth is keyed by raw cell_id.
+    cell_base <- str_replace(cell_ids, "__([^_]+)$", "")
+    breadth_by_cell <- setNames(as.numeric(breadth_lookup[cell_base]), cell_ids)
+    if (any(!is.na(breadth_by_cell))) {
+      breadth_by_cell[is.na(breadth_by_cell)] <- 0
+      top_ann <- HeatmapAnnotation(
+        breadth_at_20x = anno_barplot(breadth_by_cell[cell_ids], ylim = c(0, 1), gp = gpar(fill = "#3567a8")),
+        annotation_name_side = "left"
+      )
+    }
+  }
+}
+
 flowcharts_dir <- params$flowcharts_dir
 flow_summary_path <- file.path(flowcharts_dir, "variant_flow_summary.tsv")
 flow_summary <- if (nzchar(flowcharts_dir) && file.exists(flow_summary_path)) {
@@ -183,6 +209,7 @@ if (nrow(mat) > 1 && ncol(mat) > 1) {
           cluster_rows = TRUE,
           cluster_columns = TRUE,
           show_row_names = FALSE,
+          top_annotation = top_ann,
           column_title = "Clustered binary SNV matrix")
 }
 ```
@@ -204,6 +231,7 @@ if (ncol(mat) > 1) {
           col = colorRamp2(c(0, 0.5, 1), c("#f7fbff", "#6baed6", "#08306b")),
           cluster_rows = TRUE,
           cluster_columns = TRUE,
+          top_annotation = top_ann,
           column_title = "CTC similarity based on shared SNVs")
 }
 ```

@@ -135,6 +135,25 @@ def summarize_split_vcf(path):
     return row
 
 
+def read_long_table_flags(path):
+    """Return {cell_id: count of rows tagged LOWCONF} from the final long table.
+
+    The depth/alt/VAF filter now tags rather than drops (see
+    FILTER_MONOVAR_AND_SUBTRACT_GERMLINE in main.nf), so rows with
+    FILTER == "LOWCONF" are still present here -- kept but low-confidence.
+    """
+    if not path or not Path(path).exists():
+        return {}
+    counts = {}
+    with open(path, newline="") as handle:
+        reader = csv.DictReader(handle, delimiter="\t")
+        for row in reader:
+            if row.get("FILTER") == "LOWCONF":
+                cell_id = row.get("cell_id", "")
+                counts[cell_id] = counts.get(cell_id, 0) + 1
+    return counts
+
+
 def read_final_summary(path):
     if not path or not Path(path).exists():
         return {}
@@ -159,6 +178,7 @@ def main():
     parser.add_argument("--caller", default="monovar")
     parser.add_argument("--out-prefix", required=True)
     parser.add_argument("--final-summary")
+    parser.add_argument("--long-table", help="Final long-format table (for counting LOWCONF-flagged calls that were kept, not dropped)")
     parser.add_argument("--min-total-depth", required=True)
     parser.add_argument("--min-alt-reads", required=True)
     parser.add_argument("--min-vaf", required=True)
@@ -172,10 +192,12 @@ def main():
     split_rows = [summarize_split_vcf(p) for p in args.split_vcfs]
     split_rows.sort(key=lambda r: r["cell_id"])
     final = read_final_summary(args.final_summary)
+    flagged_by_cell = read_long_table_flags(args.long_table)
     for row in split_rows:
         cell_id = row["cell_id"]
         row["final_variant_count"] = final.get(cell_id, {}).get("variant_count", 0)
         row["final_gene_count"] = final.get(cell_id, {}).get("gene_count", 0)
+        row["flagged_low_depth_alt_count"] = flagged_by_cell.get(cell_id, 0)
         try:
             nonref_sites = int(row["nonref_sites"])
             final_variants = int(row["final_variant_count"])
@@ -204,10 +226,16 @@ def main():
 
     total_prefilter_nonref = sum(int(r["nonref_sites"]) for r in split_rows)
     total_final = sum(int(r["final_variant_count"]) for r in split_rows)
+    total_flagged = sum(flagged_by_cell.values())
     impact = [
         {"metric": "split_vcfs", "value": len(split_rows)},
         {"metric": "prefilter_nonref_calls", "value": total_prefilter_nonref},
         {"metric": "final_retained_calls", "value": total_final},
+        {"metric": "final_retained_calls_high_confidence", "value": total_final - total_flagged},
+        {"metric": "flagged_low_depth_alt_calls", "value": total_flagged},
+        # Depth/alt/VAF no longer removes anything (tagged LOWCONF and kept
+        # instead) -- everything counted here was removed by germline
+        # subtraction (bcftools isec) or the population-AF/COSMIC filter.
         {"metric": "removed_calls", "value": total_prefilter_nonref - total_final},
     ]
     write_tsv(out_prefix.with_suffix(".filter_impact.tsv"), impact, ["metric", "value"])

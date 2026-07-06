@@ -188,6 +188,13 @@ workflow {
         }
         SAMTOOLS_STATS(bam_qc_input_ch)
         MOSDEPTH_QC(bam_qc_input_ch)
+
+        mosdepth_by_patient_ch = MOSDEPTH_QC.out
+            .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
+            .groupTuple(by: 0)
+            .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
+        SUMMARIZE_BREADTH_QC(mosdepth_by_patient_ch)
+        SUMMARIZE_BREADTH_QC.out.view { "Breadth-of-coverage summary: ${it[1]}" }
     }
 
     if (params.run_monovar) {
@@ -346,8 +353,12 @@ workflow {
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
 
             if (params.run_snv_report) {
+                snv_report_breadth_ch = params.run_bam_qc
+                    ? SUMMARIZE_BREADTH_QC.out.map { patient_id, breadth_file -> tuple(patient_id, breadth_file.toString()) }
+                    : BUILD_MUTATION_MATRICES.out.map { patient_id, a, b, c, d, e -> tuple(patient_id, "") }
                 snv_report_input_ch = BUILD_MUTATION_MATRICES.out
                     .combine(MONOVAR_VARIANT_FLOWCHARTS.out, by: 0)
+                    .combine(snv_report_breadth_ch, by: 0)
                 SNV_HTML_REPORT(snv_report_input_ch)
                 SNV_HTML_REPORT.out.view { "SNV HTML report: ${it[1]}" }
             }
@@ -357,8 +368,6 @@ workflow {
             SUMMARIZE_FILTERS_QC(qc_inputs_ch)
             SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
 
-            MAKE_MULTIQC_CUSTOM_CONTENT(SUMMARIZE_FILTERS_QC.out)
-
             bcftools_stats_by_patient_ch = BCFTOOLS_STATS.out
                 .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
                 .groupTuple(by: 0)
@@ -367,12 +376,15 @@ workflow {
                 samtools_stats_by_patient_ch = SAMTOOLS_STATS.out
                     .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
                     .groupTuple(by: 0)
-                mosdepth_by_patient_ch = MOSDEPTH_QC.out
-                    .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
-                    .groupTuple(by: 0)
-                    .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
-                SUMMARIZE_BREADTH_QC(mosdepth_by_patient_ch)
-                SUMMARIZE_BREADTH_QC.out.view { "Breadth-of-coverage summary: ${it[1]}" }
+                // mosdepth_by_patient_ch and SUMMARIZE_BREADTH_QC are already
+                // built once, earlier, in the top-level `if (params.run_bam_qc)`
+                // block right after MOSDEPTH_QC -- reused here rather than
+                // recomputed to avoid a duplicate process invocation.
+                breadth_for_multiqc_ch = SUMMARIZE_BREADTH_QC.out
+                    .map { patient_id, breadth_file -> tuple(patient_id, breadth_file.toString()) }
+                multiqc_custom_input_ch = SUMMARIZE_FILTERS_QC.out.combine(breadth_for_multiqc_ch, by: 0)
+                MAKE_MULTIQC_CUSTOM_CONTENT(multiqc_custom_input_ch)
+
                 multiqc_full_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
                     .combine(bcftools_stats_by_patient_ch, by: 0)
                     .combine(samtools_stats_by_patient_ch, by: 0)
@@ -380,6 +392,10 @@ workflow {
                 MULTIQC_REPORT_WITH_BAM_QC(multiqc_full_input_ch)
                 MULTIQC_REPORT_WITH_BAM_QC.out.view { "MultiQC report: ${it[1]}" }
             } else {
+                multiqc_custom_input_ch = SUMMARIZE_FILTERS_QC.out
+                    .map { patient_id, settings, prefilter_qc, impact -> tuple(patient_id, settings, prefilter_qc, impact, "") }
+                MAKE_MULTIQC_CUSTOM_CONTENT(multiqc_custom_input_ch)
+
                 multiqc_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
                     .combine(bcftools_stats_by_patient_ch, by: 0)
                 MULTIQC_REPORT(multiqc_input_ch)
@@ -842,10 +858,7 @@ process BUILD_CALLER_COMPARISON {
     python "${projectDir}/bin/mutation_matrix/05_build_matrices.py" \\
       --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
       --matrix-dir "\$PWD/matrices" \\
-      --ctc-scite-dir "\$PWD/ctc_scite_inputs" \\
-      --min-total-depth "${params.min_total_depth}" \\
-      --min-alt-reads "${params.min_alt_reads}" \\
-      --min-vaf "${params.min_vaf}"
+      --ctc-scite-dir "\$PWD/ctc_scite_inputs"
 
     python "${projectDir}/bin/mutation_matrix/06_overlap_qc.py" \\
       --input "\$PWD/cache/merged/all_mutations_long.annotated.tsv.gz" \\
@@ -1957,6 +1970,14 @@ process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
     norm="${patient_id}.monovar_leukocyte.filtered.norm.vcf.gz"
     log="${patient_id}.monovar_leukocyte.leukocyte_exclusion.log"
 
+    # NOTE: this no longer drops low-depth/low-alt leukocyte calls -- it tags
+    # them LOWCONF instead and keeps them. bcftools isec (used downstream in
+    # FILTER_MONOVAR_AND_SUBTRACT_GERMLINE) matches on CHROM/POS/REF/ALT only
+    # and does not read the FILTER column, so every non-ref leukocyte call
+    # (PASS or LOWCONF) now counts as excludable germline evidence -- not
+    # only the ones that independently clear the same depth bar as somatic
+    # calling. This is intentional: it closes the germline-leakage gap where
+    # a real germline SNP in shallow WBC coverage escaped exclusion entirely.
     awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
       BEGIN { FS=OFS="\t" }
       /^#/ { print; next }
@@ -1971,7 +1992,10 @@ process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
         ref = ad[1] + 0
         alt = ad[2] + 0
         vaf = (ref + alt) > 0 ? alt / (ref + alt) : 0
-        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.") && dp >= min_dp && alt >= min_alt && vaf >= min_vaf) print
+        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.")) {
+          \$7 = (dp >= min_dp && alt >= min_alt && vaf >= min_vaf) ? "PASS" : "LOWCONF"
+          print
+        }
       }
     ' "${split_vcf}" > "\$filtered"
 
@@ -1981,6 +2005,8 @@ process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
     echo "min_vaf=${params.min_vaf}" >> "\$log"
     echo -n "Leukocyte exclusion variants before normalization: " >> "\$log"
     grep -vc '^#' "\$filtered" >> "\$log"
+    echo -n "Leukocyte exclusion variants tagged LOWCONF (still used for exclusion): " >> "\$log"
+    awk -F'\t' '\$7=="LOWCONF"' "\$filtered" | wc -l >> "\$log"
 
     bgzip -f -c "\$filtered" > "\$filtered_gz"
     tabix -f -p vcf "\$filtered_gz"
@@ -2065,6 +2091,12 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
     comparable="${cell_id}.monovar.no_${exclusion_source}.vcf.gz"
     log="${cell_id}.monovar_filter.log"
 
+    # NOTE: this no longer drops calls below the depth/alt/VAF bar -- it
+    # tags them LOWCONF and keeps them, so they stay visible in the long
+    # table/matrices/reports instead of silently disappearing. Downstream
+    # bcftools norm/isec and the VEP merge all pass FILTER through
+    # unchanged, so PASS/LOWCONF survives to the final per-cell VCF and the
+    # long table's FILTER column.
     awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
       BEGIN { FS=OFS="\t" }
       /^#/ { print; next }
@@ -2079,7 +2111,10 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
         ref = ad[1] + 0
         alt = ad[2] + 0
         vaf = (ref + alt) > 0 ? alt / (ref + alt) : 0
-        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.") && dp >= min_dp && alt >= min_alt && vaf >= min_vaf) print
+        if ((gt != "0/0") && (gt != "0|0") && (gt != "./.") && (gt != ".|.")) {
+          \$7 = (dp >= min_dp && alt >= min_alt && vaf >= min_vaf) ? "PASS" : "LOWCONF"
+          print
+        }
       }
     ' "${split_vcf}" > "\$filtered"
 
@@ -2091,6 +2126,8 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
     echo "min_vaf=${params.min_vaf}" >> "\$log"
     echo -n "Filtered variants: " >> "\$log"
     grep -vc '^#' "\$filtered" >> "\$log"
+    echo -n "Of which tagged LOWCONF (kept, low depth/alt): " >> "\$log"
+    awk -F'\t' '\$7=="LOWCONF"' "\$filtered" | wc -l >> "\$log"
 
     bgzip -f -c "\$filtered" > "\$filtered_gz"
     tabix -f -p vcf "\$filtered_gz"
@@ -2369,7 +2406,7 @@ process SNV_HTML_REPORT {
     publishDir { "${params.outdir}/${patient_id}/snv_report" }, mode: 'copy'
 
     input:
-    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), path(variant_flowcharts)
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), path(variant_flowcharts), val(breadth_summary_path)
 
     output:
     tuple val(patient_id), path("${patient_id}.snv_report.html"), path("${patient_id}.monovar.maf")
@@ -2398,6 +2435,7 @@ process SNV_HTML_REPORT {
         refread_matrix=file.path(Sys.getenv("PWD"), "report_inputs", "refread_matrix.tsv"),
         summary_table=file.path(Sys.getenv("PWD"), "report_inputs", "summary.tsv"),
         flowcharts_dir=normalizePath(file.path(Sys.getenv("PWD"), "${variant_flowcharts}"), mustWork=TRUE),
+        breadth_summary="${breadth_summary_path}",
         out_prefix="${patient_id}.monovar"
       )
     )'
@@ -2447,6 +2485,7 @@ process SUMMARIZE_FILTERS_QC {
       --caller monovar \
       --out-prefix "${patient_id}.monovar" \
       --final-summary "${final_summary}" \
+      --long-table "${long_table}" \
       --min-total-depth "${params.min_total_depth}" \
       --min-alt-reads "${params.min_alt_reads}" \
       --min-vaf "${params.min_vaf}" \
@@ -2532,12 +2571,13 @@ process MAKE_MULTIQC_CUSTOM_CONTENT {
     publishDir { "${params.outdir}/${patient_id}/reports/multiqc_custom" }, mode: 'copy', pattern: "*_mqc.json"
 
     input:
-    tuple val(patient_id), path(filter_settings), path(prefilter_qc), path(filter_impact)
+    tuple val(patient_id), path(filter_settings), path(prefilter_qc), path(filter_impact), val(breadth_summary_path)
 
     output:
     tuple val(patient_id), path("*_mqc.json")
 
     script:
+    def breadth_arg = breadth_summary_path ? "--breadth-summary \"${breadth_summary_path}\"" : ""
     """
     set -euo pipefail
 
@@ -2546,6 +2586,7 @@ process MAKE_MULTIQC_CUSTOM_CONTENT {
       --settings "${filter_settings}" \
       --prefilter-qc "${prefilter_qc}" \
       --filter-impact "${filter_impact}" \
+      ${breadth_arg} \
       --outdir .
     """
 }

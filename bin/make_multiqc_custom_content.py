@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--settings", required=True)
     parser.add_argument("--prefilter-qc", required=True)
     parser.add_argument("--filter-impact", required=True)
+    parser.add_argument("--breadth-summary", default=None, help="Optional reports/<patient>.breadth_summary.tsv from SUMMARIZE_BREADTH_QC")
     parser.add_argument("--outdir", default=".")
     args = parser.parse_args()
 
@@ -76,6 +77,8 @@ def main():
         args.patient_id: {
             "prefilter_nonref_calls": coerce(impact.get("prefilter_nonref_calls", "")),
             "final_retained_calls": coerce(impact.get("final_retained_calls", "")),
+            "final_retained_calls_high_confidence": coerce(impact.get("final_retained_calls_high_confidence", "")),
+            "flagged_low_depth_alt_calls": coerce(impact.get("flagged_low_depth_alt_calls", "")),
             "removed_calls": coerce(impact.get("removed_calls", "")),
         }
     }
@@ -280,6 +283,47 @@ def main():
             "data": {args.patient_id: {k: coerce(v) for k, v in settings.items()}},
         },
     )
+
+    if args.breadth_summary and Path(args.breadth_summary).is_file():
+        breadth_rows = read_rows(args.breadth_summary)
+        breadth_thresholds = sorted(
+            {key[len("breadth_"):] for row in breadth_rows for key in row if key.startswith("breadth_")}
+        )
+        breadth_table = {
+            row.get("cell_id", "unknown"): {
+                "coverage_scope": row.get("coverage_scope", ""),
+                **{f"breadth_{t}": coerce(row.get(f"breadth_{t}", "")) for t in breadth_thresholds},
+            }
+            for row in breadth_rows
+        }
+        write_json(
+            outdir / f"{args.patient_id}.breadth_summary_mqc.json",
+            {
+                "id": "cnpup_breadth_summary",
+                "section_name": "CN-PUP breadth of coverage",
+                "description": "Fraction of the target panel covered at or above each depth threshold, per cell (from mosdepth region.dist.txt).",
+                "plot_type": "table",
+                "pconfig": {
+                    "id": "cnpup_breadth_summary_table",
+                    "title": "Breadth of coverage",
+                },
+                "data": breadth_table,
+            },
+        )
+        if breadth_thresholds:
+            breadth_bargraph = {
+                cell_id: {f"breadth_{t}": values.get(f"breadth_{t}") for t in breadth_thresholds}
+                for cell_id, values in breadth_table.items()
+            }
+            write_bargraph(
+                outdir / f"{args.patient_id}.breadth_of_coverage_mqc.json",
+                "cnpup_breadth_of_coverage",
+                "CN-PUP breadth of coverage (bar)",
+                "Fraction of the target panel covered at or above each depth threshold, per cell.",
+                "Breadth of coverage",
+                "Fraction of panel covered",
+                breadth_bargraph,
+            )
 
 
 if __name__ == "__main__":

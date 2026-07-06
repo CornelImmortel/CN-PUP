@@ -66,7 +66,7 @@ def read_vcf_variants(path: Path, annotated: bool = False) -> dict[str, dict[str
             fields = line.split("\t")
             if len(fields) < 8:
                 continue
-            chrom, pos, _vid, ref, alts, _qual, _filt, info_s = fields[:8]
+            chrom, pos, _vid, ref, alts, _qual, filt, info_s = fields[:8]
             info = split_info(info_s)
             for alt in alts.split(","):
                 if len(ref) != 1 or len(alt) != 1 or alt in {".", "*"}:
@@ -77,6 +77,7 @@ def read_vcf_variants(path: Path, annotated: bool = False) -> dict[str, dict[str
                     "non_synonymous": non_syn,
                     "listed_db": listed,
                     "predictive_impact": predictive,
+                    "low_conf": filt == "LOWCONF",
                 }
     return variants
 
@@ -161,6 +162,7 @@ def write_mermaid(path: Path, row: dict[str, str]) -> None:
         f"  I[\"{label('Non-synonymous', row['non_synonymous'])}\"]",
         f"  J[\"{label('Listed in dbSNP/COSMIC annotation', row['listed_db_or_cosmic'])}\"]",
         f"  K[\"{label('Predicted protein impact', row['predictive_protein_impact'])}\"]",
+        f"  L[\"{label('Flagged (low depth/low alt, kept not dropped)', row['flagged_low_depth_alt'])}\"]",
         "  T --> A",
         "  A --> B",
         "  B --> C",
@@ -170,6 +172,7 @@ def write_mermaid(path: Path, row: dict[str, str]) -> None:
         "  E --> G",
         "  E --> H",
         "  E --> I",
+        "  E --> L",
         "  I --> J",
         "  J --> K",
     ]
@@ -219,7 +222,7 @@ def main() -> None:
     fieldnames = [
         "sample_id", "caller", "raw_input_snvs", "normalized_snvs",
         "seen_in_bulk_blood", "seen_in_leukocyte", "removed_by_any_background",
-        "comparable_snvs", "shared_with_metastasis",
+        "comparable_snvs", "flagged_low_depth_alt", "shared_with_metastasis",
         "shared_with_at_least_one_other_ctc", "shared_with_all_ctcs",
         "non_synonymous", "listed_db_or_cosmic", "predictive_protein_impact",
         "mermaid_path",
@@ -247,6 +250,7 @@ def main() -> None:
         non_syn = {var for var, ann in meta.items() if ann.get("non_synonymous")}
         listed = {var for var, ann in meta.items() if ann.get("listed_db")}
         predictive = {var for var, ann in meta.items() if ann.get("predictive_impact")}
+        flagged_low_conf = {var for var, ann in meta.items() if ann.get("low_conf")}
 
         mermaid_rel = Path("mermaid") / f"{safe_id(sample_id)}.{safe_id(caller)}.variant_flow.mmd"
         row = {
@@ -258,6 +262,7 @@ def main() -> None:
             "seen_in_leukocyte": str(len(norm & leukocyte_set)) if leukocyte_set else "0",
             "removed_by_any_background": str(len(norm - comp)) if norm else "0",
             "comparable_snvs": str(len(comp)),
+            "flagged_low_depth_alt": str(len(flagged_low_conf)),
             "shared_with_metastasis": str(len(comp & metastasis_set)) if metastasis_set else "",
             "shared_with_at_least_one_other_ctc": str(len(shared_other)),
             "shared_with_all_ctcs": str(len(shared_all)),

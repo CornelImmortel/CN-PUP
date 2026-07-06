@@ -26,9 +26,6 @@ def main():
     ap.add_argument("--input", required=True)
     ap.add_argument("--matrix-dir", required=True)
     ap.add_argument("--ctc-scite-dir", required=True)
-    ap.add_argument("--min-total-depth", type=float, default=20)
-    ap.add_argument("--min-alt-reads", type=float, default=4)
-    ap.add_argument("--min-vaf", type=float, default=0)
     args = ap.parse_args()
     matrix_dir, scite_dir = Path(args.matrix_dir), Path(args.ctc_scite_dir)
     matrix_dir.mkdir(parents=True, exist_ok=True); scite_dir.mkdir(parents=True, exist_ok=True)
@@ -45,7 +42,7 @@ def main():
         current = records.get(key)
         score = (-1 if alt is None else alt, -1 if total is None else total)
         if current is None or score > current["score"]:
-            records[key] = {"alt": alt, "total": total, "vaf": vaf, "score": score}
+            records[key] = {"alt": alt, "total": total, "vaf": vaf, "filter": r.get("filter"), "score": score}
         meta.setdefault(r["var_id"], r)
     variants = sorted(meta, key=lambda v: (meta[v].get("chrom", ""), int(float(meta[v].get("pos", 0))), v))
     columns = sorted(samples)
@@ -59,7 +56,11 @@ def main():
             alt = rec["alt"] or 0
             total = rec["total"] or 0
             vf = rec["vaf"] if rec["vaf"] is not None else (alt / total if total > 0 else None)
-            binary[(var, col)] = 1 if total >= args.min_total_depth and alt >= args.min_alt_reads and (vf or 0) >= args.min_vaf else 0
+            # Depth/alt/VAF no longer decide keep-vs-drop upstream (see
+            # FILTER_MONOVAR_AND_SUBTRACT_GERMLINE in main.nf) -- the VCF
+            # FILTER column (PASS vs LOWCONF) is the single source of truth
+            # for confidence, carried straight through by 03_vcf_to_long_table.py.
+            binary[(var, col)] = 1 if rec.get("filter") == "PASS" else 0
             vafs[(var, col)] = "" if vf is None else round(vf, 6)
             alts[(var, col)] = int(alt)
             totals[(var, col)] = int(total)
