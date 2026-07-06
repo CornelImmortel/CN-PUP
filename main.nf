@@ -371,6 +371,8 @@ workflow {
                     .map { patient_id, cell_id, mosdepth_files -> tuple(patient_id, mosdepth_files) }
                     .groupTuple(by: 0)
                     .map { patient_id, mosdepth_file_groups -> tuple(patient_id, mosdepth_file_groups.flatten()) }
+                SUMMARIZE_BREADTH_QC(mosdepth_by_patient_ch)
+                SUMMARIZE_BREADTH_QC.out.view { "Breadth-of-coverage summary: ${it[1]}" }
                 multiqc_full_input_ch = MAKE_MULTIQC_CUSTOM_CONTENT.out
                     .combine(bcftools_stats_by_patient_ch, by: 0)
                     .combine(samtools_stats_by_patient_ch, by: 0)
@@ -2399,6 +2401,29 @@ process SNV_HTML_REPORT {
         out_prefix="${patient_id}.monovar"
       )
     )'
+    """
+}
+
+process SUMMARIZE_BREADTH_QC {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/reports" }, mode: 'copy', pattern: "*.tsv"
+
+    input:
+    tuple val(patient_id), path(mosdepth_files)
+
+    output:
+    tuple val(patient_id), path("*.breadth_summary.tsv")
+
+    script:
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/summarize_breadth_qc.py" \
+      --patient-id "${patient_id}" \
+      --out-prefix "${patient_id}.monovar" \
+      --thresholds "${params.breadth_thresholds}" \
+      ${mosdepth_files}
     """
 }
 
