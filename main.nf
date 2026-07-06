@@ -32,6 +32,8 @@ params.sccaller_bias = params.sccaller_bias ?: 0.75
 params.sccaller_engine = params.sccaller_engine ?: "samtools"
 params.sccaller_mode = params.sccaller_mode ?: "external_bulk"
 params.sccaller_hsnp_vcf = params.sccaller_hsnp_vcf ?: ""
+params.sccaller_head = params.sccaller_head ?: ""
+params.sccaller_tail = params.sccaller_tail ?: ""
 params.run_vep_filter = params.run_vep_filter ?: false
 params.run_snv_report = params.run_snv_report == null ? true : params.run_snv_report
 params.run_final_report = params.run_final_report == null ? true : params.run_final_report
@@ -660,6 +662,13 @@ process RUN_SCCALLER_FROM_BAM {
     tuple val(patient_id), val(cell_id), path("${cell_id}.sccaller.vcf")
 
     script:
+    def sccaller_extra_args = ""
+    if (params.sccaller_head) {
+        sccaller_extra_args += " --head ${params.sccaller_head}"
+    }
+    if (params.sccaller_tail) {
+        sccaller_extra_args += " --tail ${params.sccaller_tail}"
+    }
     """
     set -euo pipefail
 
@@ -687,8 +696,13 @@ process RUN_SCCALLER_FROM_BAM {
       --cpu_num "${params.sccaller_cpu}" \\
       --bias "${params.sccaller_bias}" \\
       --wkdir sccaller_work \\
-      --engine "${params.sccaller_engine}" \\
+      --engine "${params.sccaller_engine}"${sccaller_extra_args} \\
       > "${cell_id}.sccaller.log" 2>&1
+
+    if [[ ! -s "${cell_id}.sccaller.vcf" ]]; then
+      echo "ERROR: ${params.sccaller_script} did not produce ${cell_id}.sccaller.vcf -- see ${cell_id}.sccaller.log. A common cause on this reference is SCcaller choking on HLA/ALT decoy contigs; try setting --sccaller_head/--sccaller_tail to restrict it to the primary chromosomes (e.g. 1/22 for Homo_sapiens_assembly38.fasta)." >&2
+      exit 1
+    fi
 
     awk 'BEGIN{FS=OFS="\\t"} /^#/ {print; next} /0\\/1/ && /True/ && \$7=="." && length(\$5)==1 {split(\$10,a,":"); split(a[2],ad,","); if (ad[1]+ad[2]>=20) print}' \\
       "${cell_id}.sccaller.vcf" > "${cell_id}.somatic.snv.vcf"

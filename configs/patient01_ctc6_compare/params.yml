@@ -56,6 +56,14 @@ sccaller_bias: 0.75
 sccaller_engine: samtools
 sccaller_mode: external_bulk
 sccaller_hsnp_vcf: /tzu-share-2/users/students/cornelusp/sccaller/ht/SRR8617606.hg38.hsnp.biallelic.dbsnp155common.vcf
+# 2026-07-06: without these, SCcaller iterates every contig in
+# Homo_sapiens_assembly38.fasta, including hundreds of HLA/ALT decoy contigs
+# whose names (e.g. HLA-DRB1*15:01:01:04) break samtools mpileup's region
+# parsing. Confirmed on CTC2: ran ~4.2 hours hitting these errors repeatedly
+# and never produced a VCF. 1/22 restricts to chr1..chr22 in this reference's
+# record order (documented in vcf_bench/variant_caller_comparison.qmd).
+sccaller_head: 1
+sccaller_tail: 22
 
 # Variant filtering (matches the original vcf_bench comparison thresholds).
 min_total_depth: 20

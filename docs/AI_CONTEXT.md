@@ -586,6 +586,16 @@ support and a large thesis-document extension.
 - `combined` mode requires both a germline/bulk VCF and leukocyte evidence.
 - For local dry runs, expect validation failures unless `/tzu-share-2` paths
   are accessible.
+- **SCcaller on `Homo_sapiens_assembly38.fasta` needs `sccaller_head`/
+  `sccaller_tail` set (e.g. `1`/`22`), or it silently fails.** This reference
+  includes hundreds of HLA/ALT decoy contigs with `*`/`:` in their names
+  (e.g. `HLA-DRB1*15:01:01:04`) that break `samtools mpileup`'s region
+  parsing. Confirmed 2026-07-06 on patient01/CTC2: ran ~4.2 hours hitting
+  these errors, never produced a VCF, and (before this was added) failed
+  later with a confusing "cannot open file ... for reading" from the
+  downstream `awk` step rather than a clear error at the source. Both params
+  default to unset (scans every contig) -- set them per-patient based on
+  that reference's actual chromosome ordering.
 - Avoid editing generated Quarto/HTML support libraries under
   `docs/pipeline_thesis_files/`.
 - `tools/DelSIEVE/` is vendored third-party code; changes there should be rare
