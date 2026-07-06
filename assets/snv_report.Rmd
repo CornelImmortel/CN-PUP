@@ -364,6 +364,8 @@ shared2_table <- long %>%
 datatable(shared2_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
 ```
 
+Need the exact per-cell DP/alt-reads behind any variant above (including the WBC's own reads)? See the companion workbook: **`r patient_id`_detail.xlsx**, generated alongside this report with one row per variant/cell plus a WBC lookup for every shared variant.
+
 # Per-CTC Pages
 
 ```{r per-ctc, results='asis'}
