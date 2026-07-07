@@ -202,7 +202,13 @@ def build_all_variants_sheet(wb, rows, wbc_raw):
     autosize(ws, headers)
 
 
-def build_shared_variants_sheet(wb, rows, ctc_ids, split_vcf_by_cell, wbc_raw):
+def compute_shared_variant_states(rows, ctc_ids, split_vcf_by_cell, wbc_raw):
+    """One entry per variant shared by >=2 CTCs: metadata, per-CTC state/DP/alt, WBC tier.
+
+    Shared by the Excel "Shared variants detail" sheet and the SNV
+    report's shared-variant heatmap, so the two stay consistent instead
+    of drifting from two separate implementations.
+    """
     var_meta = {}
     var_cells = {}
     for row in rows:
@@ -222,25 +228,14 @@ def build_shared_variants_sheet(wb, rows, ctc_ids, split_vcf_by_cell, wbc_raw):
                 needed_by_ctc[ctc].add(key)
     raw_by_ctc = {c: load_raw_records(split_vcf_by_cell.get(c), needed_by_ctc[c]) for c in ctc_ids}
 
-    ws = wb.create_sheet("Shared variants detail")
-    base_headers = ["var_id", "gene_symbol", "CHROM", "POS", "REF", "ALT", "consequence", "impact", "shared_n"]
-    ctc_headers = [h for c in ctc_ids for h in (f"{c}_state", f"{c}_DP", f"{c}_alt")]
-    wbc_headers = ["WBC_tier", "WBC_GT", "WBC_DP", "WBC_alt"]
-    headers = base_headers + ctc_headers + wbc_headers
-    write_header(ws, headers)
-
     ordered = sorted(shared, key=lambda v: -len(shared[v]))
-    for r_idx, var_id in enumerate(ordered, start=2):
+    computed = []
+    for var_id in ordered:
         m = var_meta[var_id]
         key = (m["CHROM"], m["POS"], m["REF"], m["ALT"])
         cells = shared[var_id]
 
-        col = 1
-        for val in (var_id, m.get("gene_symbol", ""), m["CHROM"], m["POS"], m["REF"], m["ALT"],
-                    m.get("consequence", ""), m.get("impact", ""), len(cells)):
-            ws.cell(row=r_idx, column=col, value=val)
-            col += 1
-
+        states = {}
         for ctc in ctc_ids:
             if ctc in cells:
                 final_row = cells[ctc]
@@ -251,20 +246,88 @@ def build_shared_variants_sheet(wb, rows, ctc_ids, split_vcf_by_cell, wbc_raw):
                 state = ctc_state(rec)
                 dp = rec["dp"] if rec else ""
                 alt = rec["alt"] if rec else ""
-            state_cell = ws.cell(row=r_idx, column=col, value=CTC_STATE_LABEL[state])
-            style_cell(state_cell, CTC_STATE_STYLE[state])
-            ws.cell(row=r_idx, column=col + 1, value=dp)
-            ws.cell(row=r_idx, column=col + 2, value=alt)
-            col += 3
+            states[ctc] = {"state": state, "dp": dp, "alt": alt}
 
         tier, gt, dp, alt = wbc_tier(wbc_raw.get(key))
-        tier_cell = ws.cell(row=r_idx, column=col, value=tier)
-        style_cell(tier_cell, WBC_TIER_STYLE.get(tier, "neutral"), bold=(tier == "strong_signal"))
-        ws.cell(row=r_idx, column=col + 1, value=gt)
-        ws.cell(row=r_idx, column=col + 2, value=dp)
-        ws.cell(row=r_idx, column=col + 3, value=alt)
+        computed.append({
+            "var_id": var_id,
+            "gene_symbol": m.get("gene_symbol", ""),
+            "CHROM": m["CHROM"],
+            "POS": m["POS"],
+            "REF": m["REF"],
+            "ALT": m["ALT"],
+            "consequence": m.get("consequence", ""),
+            "impact": m.get("impact", ""),
+            "shared_n": len(cells),
+            "states": states,
+            "wbc": {"tier": tier, "gt": gt, "dp": dp, "alt": alt},
+        })
+    return computed
+
+
+def build_shared_variants_sheet(wb, computed_rows, ctc_ids):
+    ws = wb.create_sheet("Shared variants detail")
+    base_headers = ["var_id", "gene_symbol", "CHROM", "POS", "REF", "ALT", "consequence", "impact", "shared_n"]
+    ctc_headers = [h for c in ctc_ids for h in (f"{c}_state", f"{c}_DP", f"{c}_alt")]
+    wbc_headers = ["WBC_tier", "WBC_GT", "WBC_DP", "WBC_alt"]
+    headers = base_headers + ctc_headers + wbc_headers
+    write_header(ws, headers)
+
+    for r_idx, entry in enumerate(computed_rows, start=2):
+        col = 1
+        for val in (entry["var_id"], entry["gene_symbol"], entry["CHROM"], entry["POS"], entry["REF"], entry["ALT"],
+                    entry["consequence"], entry["impact"], entry["shared_n"]):
+            ws.cell(row=r_idx, column=col, value=val)
+            col += 1
+
+        for ctc in ctc_ids:
+            s = entry["states"][ctc]
+            state_cell = ws.cell(row=r_idx, column=col, value=CTC_STATE_LABEL[s["state"]])
+            style_cell(state_cell, CTC_STATE_STYLE[s["state"]])
+            ws.cell(row=r_idx, column=col + 1, value=s["dp"])
+            ws.cell(row=r_idx, column=col + 2, value=s["alt"])
+            col += 3
+
+        wbc = entry["wbc"]
+        tier_cell = ws.cell(row=r_idx, column=col, value=wbc["tier"])
+        style_cell(tier_cell, WBC_TIER_STYLE.get(wbc["tier"], "neutral"), bold=(wbc["tier"] == "strong_signal"))
+        ws.cell(row=r_idx, column=col + 1, value=wbc["gt"])
+        ws.cell(row=r_idx, column=col + 2, value=wbc["dp"])
+        ws.cell(row=r_idx, column=col + 3, value=wbc["alt"])
 
     autosize(ws, headers)
+
+
+def write_shared_variant_matrix_tsv(path, computed_rows, ctc_ids):
+    """Wide TSV for the SNV report's shared-variant heatmap: one row per shared
+    variant, one {ctc}_state column per CTC, plus the WBC tier block. Same
+    rows/states as the Excel sheet, minus per-cell DP/alt (the heatmap only
+    needs the categorical state)."""
+    fieldnames = ["var_id", "gene_symbol", "CHROM", "POS", "REF", "ALT", "shared_n"]
+    fieldnames += [f"{c}_state" for c in ctc_ids]
+    fieldnames += ["WBC_tier", "WBC_GT", "WBC_DP", "WBC_alt"]
+
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, delimiter="\t", fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        for entry in computed_rows:
+            out_row = {
+                "var_id": entry["var_id"],
+                "gene_symbol": entry["gene_symbol"],
+                "CHROM": entry["CHROM"],
+                "POS": entry["POS"],
+                "REF": entry["REF"],
+                "ALT": entry["ALT"],
+                "shared_n": entry["shared_n"],
+            }
+            for ctc in ctc_ids:
+                out_row[f"{ctc}_state"] = entry["states"][ctc]["state"]
+            wbc = entry["wbc"]
+            out_row["WBC_tier"] = wbc["tier"]
+            out_row["WBC_GT"] = wbc["gt"]
+            out_row["WBC_DP"] = wbc["dp"]
+            out_row["WBC_alt"] = wbc["alt"]
+            writer.writerow(out_row)
 
 
 def main():
@@ -272,6 +335,7 @@ def main():
     parser.add_argument("--patient-id", required=True)
     parser.add_argument("--long-table", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--matrix-out", required=True)
     parser.add_argument("--wbc-split-vcf", default="NA")
     parser.add_argument("ctc_split_vcfs", nargs="+")
     args = parser.parse_args()
@@ -284,12 +348,16 @@ def main():
     wbc_path = args.wbc_split_vcf if args.wbc_split_vcf and args.wbc_split_vcf != "NA" else None
     wbc_raw = load_raw_records(wbc_path, all_keys)
 
+    shared_computed = compute_shared_variant_states(rows, ctc_ids, split_vcf_by_cell, wbc_raw)
+
     wb = Workbook()
     wb.remove(wb.active)
     build_all_variants_sheet(wb, rows, wbc_raw)
-    build_shared_variants_sheet(wb, rows, ctc_ids, split_vcf_by_cell, wbc_raw)
+    build_shared_variants_sheet(wb, shared_computed, ctc_ids)
     wb.save(args.out)
+    write_shared_variant_matrix_tsv(args.matrix_out, shared_computed, ctc_ids)
     print(f"Wrote {args.out}: {len(rows)} final-call rows, {len({r['var_id'] for r in rows})} distinct variants")
+    print(f"Wrote {args.matrix_out}: {len(shared_computed)} shared variants")
 
 
 if __name__ == "__main__":

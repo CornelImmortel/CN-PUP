@@ -15,6 +15,7 @@ params:
   summary_table: ""
   flowcharts_dir: ""
   breadth_summary: ""
+  shared_variant_matrix: ""
   out_prefix: "snv_report"
 ---
 
@@ -235,6 +236,86 @@ if (ncol(mat) > 1) {
           column_title = "CTC similarity based on shared SNVs")
 }
 ```
+
+## Shared-Variant Status Matrix
+
+```{r shared-variant-matrix, fig.height=9}
+shared_matrix_path <- params$shared_variant_matrix
+has_shared_matrix <- !is.null(shared_matrix_path) && nzchar(shared_matrix_path) && file.exists(shared_matrix_path)
+if (has_shared_matrix) {
+  svm_raw <- read_tsv(shared_matrix_path, show_col_types = FALSE)
+}
+
+if (has_shared_matrix && nrow(svm_raw) > 0) {
+  svm_raw <- svm_raw %>% arrange(desc(shared_n))
+  state_cols <- names(svm_raw)[str_detect(names(svm_raw), "_state$")]
+  ctc_names <- str_remove(state_cols, "_state$")
+
+  state_mat <- as.matrix(svm_raw[, state_cols, drop = FALSE])
+  colnames(state_mat) <- ctc_names
+  rownames(state_mat) <- paste0(
+    if_else(is.na(svm_raw$gene_symbol) | svm_raw$gene_symbol == "", "intergenic", svm_raw$gene_symbol),
+    " ", svm_raw$CHROM, ":", svm_raw$POS
+  )
+
+  # Colors mirror bin/build_detail_workbook.py's CTC_STATE_STYLE/WBC_TIER_STYLE
+  # so the report and the companion Excel workbook read consistently.
+  state_colors <- c(
+    present_pass     = "#0ca30c",
+    present_lowconf  = "#c98500",
+    filtered_out     = "#6b3fa0",
+    absent           = "#d9d9d9",
+    not_covered      = "#f2f2f2"
+  )
+  state_labels <- c(
+    present_pass     = "Present (PASS)",
+    present_lowconf  = "Present (LOWCONF)",
+    filtered_out     = "Removed (germline/pop-AF)",
+    absent           = "Absent (0/0)",
+    not_covered      = "Not covered"
+  )
+
+  wbc_tier_colors <- c(
+    clean          = "#0ca30c",
+    not_covered    = "#f2f2f2",
+    weak_signal    = "#c98500",
+    strong_signal  = "#d03b3b",
+    not_available  = "#f2f2f2"
+  )
+  wbc_tier_labels <- c(
+    clean          = "WBC clean",
+    not_covered    = "WBC not covered",
+    weak_signal    = "WBC weak signal",
+    strong_signal  = "WBC STRONG signal",
+    not_available  = "WBC not available"
+  )
+
+  wbc_ann <- rowAnnotation(
+    WBC = svm_raw$WBC_tier,
+    col = list(WBC = wbc_tier_colors),
+    annotation_legend_param = list(WBC = list(at = names(wbc_tier_colors), labels = unname(wbc_tier_labels[names(wbc_tier_colors)])))
+  )
+
+  Heatmap(state_mat,
+          name = "CTC status",
+          col = state_colors,
+          cluster_rows = FALSE,
+          cluster_columns = FALSE,
+          show_row_names = nrow(state_mat) <= 150,
+          right_annotation = wbc_ann,
+          heatmap_legend_param = list(at = names(state_colors), labels = unname(state_labels[names(state_colors)])),
+          column_title = "Shared-variant status matrix (CTC state + WBC germline evidence)")
+} else {
+  cat("Shared-variant status matrix was not provided to this report.")
+}
+```
+
+Rows are every variant shared by 2+ CTCs, sorted by how many CTCs share
+it. The WBC column on the right applies the same 4-tier germline
+check used throughout this session's analysis: a purple "removed"
+cell means that CTC's raw call was excluded by germline subtraction
+or the population-AF/COSMIC filter (not the depth/alt-read flag) --
+worth a second look together with the WBC tier for that row.
 
 ```{r pairwise-overlap-table}
 if (ncol(mat) > 1) {

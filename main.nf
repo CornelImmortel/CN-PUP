@@ -354,21 +354,7 @@ workflow {
             BUILD_MUTATION_MATRICES(final_matrix_input_ch)
             BUILD_MUTATION_MATRICES.out.view { "Mutation matrix long table: ${it[1]}" }
 
-            if (params.run_snv_report) {
-                snv_report_breadth_ch = params.run_bam_qc
-                    ? SUMMARIZE_BREADTH_QC.out.map { patient_id, breadth_file -> tuple(patient_id, breadth_file.toString()) }
-                    : BUILD_MUTATION_MATRICES.out.map { patient_id, a, b, c, d, e -> tuple(patient_id, "") }
-                snv_report_input_ch = BUILD_MUTATION_MATRICES.out
-                    .combine(MONOVAR_VARIANT_FLOWCHARTS.out, by: 0)
-                    .combine(snv_report_breadth_ch, by: 0)
-                SNV_HTML_REPORT(snv_report_input_ch)
-                SNV_HTML_REPORT.out.view { "SNV HTML report: ${it[1]}" }
-            }
-
             split_vcfs_by_patient_ch = SPLIT_MONOVAR.out.map { patient_id, split_vcfs, sample_map, split_log -> tuple(patient_id, split_vcfs) }
-            qc_inputs_ch = split_vcfs_by_patient_ch.combine(BUILD_MUTATION_MATRICES.out, by: 0).combine(filter_info_ch, by: 0)
-            SUMMARIZE_FILTERS_QC(qc_inputs_ch)
-            SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
 
             // SPLIT_MONOVAR_WBC_SUBSET only fires for patients using the
             // monovar_wbc_subset germline mode; for everyone else the
@@ -392,6 +378,24 @@ workflow {
                 .combine(detail_workbook_wbc_ch, by: 0)
             BUILD_DETAIL_WORKBOOK(detail_workbook_input_ch)
             BUILD_DETAIL_WORKBOOK.out.view { "Detail workbook: ${it[1]}" }
+
+            if (params.run_snv_report) {
+                snv_report_breadth_ch = params.run_bam_qc
+                    ? SUMMARIZE_BREADTH_QC.out.map { patient_id, breadth_file -> tuple(patient_id, breadth_file.toString()) }
+                    : BUILD_MUTATION_MATRICES.out.map { patient_id, a, b, c, d, e -> tuple(patient_id, "") }
+                snv_report_matrix_ch = BUILD_DETAIL_WORKBOOK.out
+                    .map { patient_id, xlsx, matrix -> tuple(patient_id, matrix) }
+                snv_report_input_ch = BUILD_MUTATION_MATRICES.out
+                    .combine(MONOVAR_VARIANT_FLOWCHARTS.out, by: 0)
+                    .combine(snv_report_breadth_ch, by: 0)
+                    .combine(snv_report_matrix_ch, by: 0)
+                SNV_HTML_REPORT(snv_report_input_ch)
+                SNV_HTML_REPORT.out.view { "SNV HTML report: ${it[1]}" }
+            }
+
+            qc_inputs_ch = split_vcfs_by_patient_ch.combine(BUILD_MUTATION_MATRICES.out, by: 0).combine(filter_info_ch, by: 0)
+            SUMMARIZE_FILTERS_QC(qc_inputs_ch)
+            SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
 
             bcftools_stats_by_patient_ch = BCFTOOLS_STATS.out
                 .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
@@ -2448,7 +2452,7 @@ process BUILD_DETAIL_WORKBOOK {
     tuple val(patient_id), path(long_table), path(ctc_split_vcfs), val(wbc_split_vcf)
 
     output:
-    tuple val(patient_id), path("${patient_id}_detail.xlsx")
+    tuple val(patient_id), path("${patient_id}_detail.xlsx"), path("${patient_id}.shared_variant_matrix.tsv")
 
     script:
     def wbc_arg = (wbc_split_vcf && wbc_split_vcf != 'NA') ? "--wbc-split-vcf \"${wbc_split_vcf}\"" : ''
@@ -2459,6 +2463,7 @@ process BUILD_DETAIL_WORKBOOK {
       --patient-id "${patient_id}" \
       --long-table "${long_table}" \
       --out "${patient_id}_detail.xlsx" \
+      --matrix-out "${patient_id}.shared_variant_matrix.tsv" \
       ${wbc_arg} \
       ${ctc_split_vcfs}
     """
@@ -2470,7 +2475,7 @@ process SNV_HTML_REPORT {
     publishDir { "${params.outdir}/${patient_id}/snv_report" }, mode: 'copy'
 
     input:
-    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), path(variant_flowcharts), val(breadth_summary_path)
+    tuple val(patient_id), path(long_table), path(binary_matrix), path(altread_matrix), path(refread_matrix), path(summary_table), path(variant_flowcharts), val(breadth_summary_path), path(shared_variant_matrix)
 
     output:
     tuple val(patient_id), path("${patient_id}.snv_report.html"), path("${patient_id}.monovar.maf")
@@ -2500,6 +2505,7 @@ process SNV_HTML_REPORT {
         summary_table=file.path(Sys.getenv("PWD"), "report_inputs", "summary.tsv"),
         flowcharts_dir=normalizePath(file.path(Sys.getenv("PWD"), "${variant_flowcharts}"), mustWork=TRUE),
         breadth_summary="${breadth_summary_path}",
+        shared_variant_matrix="${shared_variant_matrix}",
         out_prefix="${patient_id}.monovar"
       )
     )'
