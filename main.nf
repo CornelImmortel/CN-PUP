@@ -2604,6 +2604,7 @@ process MOSDEPTH_QC {
 
     mosdepth \
       --threads ${task.cpus} \
+      --no-per-base \
       "\${by_args[@]}" \
       "${cell_id}" \
       "${bam}"
