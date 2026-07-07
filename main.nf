@@ -370,6 +370,29 @@ workflow {
             SUMMARIZE_FILTERS_QC(qc_inputs_ch)
             SUMMARIZE_FILTERS_QC.out.view { "Filter/QC summary: ${it[1]}" }
 
+            // SPLIT_MONOVAR_WBC_SUBSET only fires for patients using the
+            // monovar_wbc_subset germline mode; for everyone else the
+            // workbook still needs to run, just without a WBC lookup. Tag +
+            // mix + groupTuple (same idiom as exclusion_join_ch above) so
+            // every patient gets exactly one emission: the real WBC split
+            // VCF path when available, otherwise the 'NA' sentinel.
+            detail_workbook_wbc_ch = filter_info_ch
+                .map { patient_id, ref_fasta, germline_mode, germline_vcf -> tuple(patient_id, 'NA') }
+                .mix(SPLIT_MONOVAR_WBC_SUBSET.out.map { patient_id, split_vcfs, sample_map, split_log, ref_fasta ->
+                    def files = split_vcfs instanceof List ? split_vcfs : [split_vcfs]
+                    def wbc_file = files.find { isLeukocyteCell(it.getBaseName().replaceFirst(/\.monovar\.split$/, '')) } ?: files[0]
+                    tuple(patient_id, wbc_file.toString())
+                })
+                .groupTuple(by: 0)
+                .map { patient_id, paths -> tuple(patient_id, paths.find { it != 'NA' } ?: 'NA') }
+
+            detail_workbook_input_ch = BUILD_MUTATION_MATRICES.out
+                .map { patient_id, long_table, binary_matrix, altread_matrix, refread_matrix, summary_table -> tuple(patient_id, long_table) }
+                .combine(split_vcfs_by_patient_ch, by: 0)
+                .combine(detail_workbook_wbc_ch, by: 0)
+            BUILD_DETAIL_WORKBOOK(detail_workbook_input_ch)
+            BUILD_DETAIL_WORKBOOK.out.view { "Detail workbook: ${it[1]}" }
+
             bcftools_stats_by_patient_ch = BCFTOOLS_STATS.out
                 .map { patient_id, cell_id, stats_file -> tuple(patient_id, stats_file) }
                 .groupTuple(by: 0)
@@ -2415,6 +2438,31 @@ process BUILD_MUTATION_MATRICES {
     """
 }
 
+
+process BUILD_DETAIL_WORKBOOK {
+    tag "$patient_id"
+    conda "envs/python_reporting.yml"
+    publishDir { "${params.outdir}/${patient_id}/snv_report" }, mode: 'copy'
+
+    input:
+    tuple val(patient_id), path(long_table), path(ctc_split_vcfs), val(wbc_split_vcf)
+
+    output:
+    tuple val(patient_id), path("${patient_id}_detail.xlsx")
+
+    script:
+    def wbc_arg = (wbc_split_vcf && wbc_split_vcf != 'NA') ? "--wbc-split-vcf \"${wbc_split_vcf}\"" : ''
+    """
+    set -euo pipefail
+
+    python "${projectDir}/bin/build_detail_workbook.py" \
+      --patient-id "${patient_id}" \
+      --long-table "${long_table}" \
+      --out "${patient_id}_detail.xlsx" \
+      ${wbc_arg} \
+      ${ctc_split_vcfs}
+    """
+}
 
 process SNV_HTML_REPORT {
     tag "$patient_id"
