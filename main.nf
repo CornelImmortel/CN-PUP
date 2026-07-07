@@ -1994,7 +1994,7 @@ process PREPARE_MONOVAR_LEUKOCYTE_EXCLUSION {
     # a real germline SNP in shallow WBC coverage escaped exclusion entirely.
     awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
       BEGIN { FS=OFS="\t" }
-      /^#CHROM/ { print "##FILTER=<ID=LOWCONF,Description=\"Non-reference call below the depth/alt-read/VAF confidence threshold; kept for visibility, not dropped\">" }
+      /^#CHROM/ { print "##FILTER=<ID=LOWCONF,Description=\\"Non-reference call below the depth/alt-read/VAF confidence threshold; kept for visibility, not dropped\\">" }
       /^#/ { print; next }
       {
         split(\$9, fmt, ":")
@@ -2114,7 +2114,7 @@ process FILTER_MONOVAR_AND_SUBTRACT_GERMLINE {
     # long table's FILTER column.
     awk -v min_dp="${params.min_total_depth}" -v min_alt="${params.min_alt_reads}" -v min_vaf="${params.min_vaf}" '
       BEGIN { FS=OFS="\t" }
-      /^#CHROM/ { print "##FILTER=<ID=LOWCONF,Description=\"Non-reference call below the depth/alt-read/VAF confidence threshold; kept for visibility, not dropped\">" }
+      /^#CHROM/ { print "##FILTER=<ID=LOWCONF,Description=\\"Non-reference call below the depth/alt-read/VAF confidence threshold; kept for visibility, not dropped\\">" }
       /^#/ { print; next }
       {
         split(\$9, fmt, ":")
