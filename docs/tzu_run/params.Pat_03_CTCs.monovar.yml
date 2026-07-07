@@ -20,7 +20,7 @@ run_bam_qc: true
 monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
 monovar_threads: 6
 monovar_region: ""
-monovar_targets_bed: /tzu-share-2/resources/genome/hmf_references/hmf_pipeline_resources.38_v2.3.0--2/dna/variants/CoverageCodingPanel.38.bed.gz
+monovar_targets_bed: ""
 monovar_background_ctc_count: 5
 monovar_background_seed: 13
 
@@ -56,14 +56,14 @@ vep_sites_per_chunk: 5000
 final_report_top_variants: 200
 final_report_rarefaction_iterations: 200
 
-# BAM-level QC and MultiQC. Restrict mosdepth to the WXS coding panel so it does
-# not spend time over non-target contigs such as phix.
+# BAM-level QC and MultiQC. WGS data -- no BED restriction, mosdepth covers
+# the whole genome.
 mosdepth_threads: 2
-mosdepth_by: /tzu-share-2/resources/genome/hmf_references/hmf_pipeline_resources.38_v2.3.0--2/dna/variants/CoverageCodingPanel.38.bed.gz
+mosdepth_by: ""
 
 # DelSIEVE prep and stage 1 run.
-run_delsieve_prep: true
-run_delsieve: true
+run_delsieve_prep: false
+run_delsieve: false
 run_delsieve_from_existing: false
 run_delsieve_tree_annotator: true
 run_delsieve_tree_png: true
