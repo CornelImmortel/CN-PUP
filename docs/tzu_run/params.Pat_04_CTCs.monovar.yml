@@ -20,7 +20,13 @@ run_bam_qc: true
 monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
 monovar_threads: 6
 monovar_region: ""
-monovar_targets_bed: ""
+# Not a coding-panel restriction (that was dropped for WGS) -- this is the
+# 25 canonical chromosomes only (chr1-22, X, Y, M), which keeps samtools
+# mpileup off the "phix" spike-in control contig present in these BAMs'
+# headers but absent from Homo_sapiens_assembly38.fasta, which otherwise
+# crashes RUN_MONOVAR/RUN_MONOVAR_WBC_SUBSET with
+# "faidx_adjust_position: The sequence 'phix' was not found".
+monovar_targets_bed: /tzu-share-2/users/students/cornelusp/canonical_chroms.bed
 monovar_background_ctc_count: 5
 monovar_background_seed: 13
 
