@@ -28,13 +28,13 @@ run_bam_qc: false
 run_delsieve_from_existing: true
 delsieve_existing_long_table: results_good_ctcs/PAT-2026-03-00003/caller_comparison/cache/merged/all_mutations_long.annotated.tsv.gz
 
-# Phase 1 (this run): prep only, no BEAST2. Check
-# results_delsieve_nofilter/PAT-2026-03-00003/delsieve_prep/candidate_summary.tsv
-# for the candidate_sites count before flipping run_delsieve to true --
-# BEAST2 (RUN_DELSIEVE_STAGE1) is the slow, expensive step and site count
-# directly drives its runtime/memory.
+# Phase 2: candidate selection came back as 1894 sites (verified via
+# candidate_summary.tsv). Rather than guess at runtime, launch the real
+# BEAST2 stage and read its own progress log for an actual iterations/sec
+# and ETA -- see the run instructions for exactly where that log lives
+# while the task is still in flight.
 run_delsieve_prep: true
-run_delsieve: false
+run_delsieve: true
 
 # Candidate-site filtering. min_total_depth/min_alt_reads here are NOT
 # inherited from whatever filtering (or lack of it) produced the source
