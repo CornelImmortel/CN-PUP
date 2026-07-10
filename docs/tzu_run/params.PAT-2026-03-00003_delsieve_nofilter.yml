@@ -1,0 +1,92 @@
+patients: docs/tzu_run/patients.PAT-2026-03-00003_delsieve_nofilter.tsv
+# Separate outdir from results_good_ctcs -- this is an exploratory,
+# no-filter-candidate DelSIEVE run, kept isolated from any existing
+# delsieve_prep/ output under the normal filtered-run outdir so nothing
+# gets silently overwritten.
+outdir: results_delsieve_nofilter
+
+# Execution/reporting. Weblog left off -- avoids a localhost:8605 port
+# collision with the Patient 03/04 WGS run that may be running concurrently
+# in a different CN-PUP clone on this same node.
+enable_weblog: false
+
+# Every branch off except DelSIEVE -- this run does nothing but read an
+# already-computed long table and feed it to DelSIEVE.
+run_monovar: false
+run_external_callers: false
+run_sccaller: false
+run_comparison: false
+run_final_report: false
+run_snv_report: false
+run_vep_filter: false
+run_bam_qc: false
+
+# DelSIEVE source: the caller-comparison long table already produced by the
+# no-filter CN-PUP3 run for PAT-2026-03-00003 (correct schema for
+# prepare_delsieve_inputs.py -- sample_id/chrom/pos/total_depth, NOT the
+# ctc_id/CHROM/POS/DP schema used by BUILD_MUTATION_MATRICES's long.tsv).
+run_delsieve_from_existing: true
+delsieve_existing_long_table: results_good_ctcs/PAT-2026-03-00003/caller_comparison/cache/merged/all_mutations_long.annotated.tsv.gz
+
+# Phase 1 (this run): prep only, no BEAST2. Check
+# results_delsieve_nofilter/PAT-2026-03-00003/delsieve_prep/candidate_summary.tsv
+# for the candidate_sites count before flipping run_delsieve to true --
+# BEAST2 (RUN_DELSIEVE_STAGE1) is the slow, expensive step and site count
+# directly drives its runtime/memory.
+run_delsieve_prep: true
+run_delsieve: false
+
+# Candidate-site filtering. min_total_depth/min_alt_reads here are NOT
+# inherited from whatever filtering (or lack of it) produced the source
+# long table above -- prepare_delsieve_inputs.py re-derives pass/fail
+# itself from the table's own total_depth/altread columns using exactly
+# these two values. Set to 0 so the "no-filter" input actually stays
+# unfiltered going into DelSIEVE, instead of silently re-imposing the
+# standard 20/4 cutoff.
+min_total_depth: 0
+min_alt_reads: 0
+min_vaf: 0.0
+
+# MonoVar candidate-site min-CTC-support filter (independent of the above,
+# not affected by min_total_depth/min_alt_reads). Default 2, per CN-PUP's
+# current implementation -- the Bibliography notes recommend >=3 as the
+# main-analysis threshold; worth an explicit sensitivity run at 3 once this
+# one's candidate count is known.
+delsieve_min_ctc_support: 2
+delsieve_callers: all
+
+# DelSIEVE Stage 1 execution (used once run_delsieve is flipped to true).
+delsieve_applauncher: /tzu-share-2/users/students/cornelusp/beast/bin/applauncher
+delsieve_beast: /tzu-share-2/users/students/cornelusp/beast/bin/beast
+delsieve_treeannotator: /tzu-share-2/users/students/cornelusp/beast/bin/applauncher
+delsieve_version_file: ""
+delsieve_template_stage1: /tzu-share-2/users/students/cornelusp/CN-PUP3/configs/delsieve_smc_mu_sa_stage_1.fixed.xml
+delsieve_threads: 4
+delsieve_datatype: 1
+delsieve_missing_threshold: 1
+delsieve_sample_cells: 0
+delsieve_sample_loci: 0
+delsieve_ignore_sex: false
+delsieve_beast_extra_args: ""
+delsieve_datacollector_extra_args: ""
+run_delsieve_tree_annotator: true
+run_delsieve_tree_png: true
+run_delsieve_variant_caller: true
+run_delsieve_gene_annotator: true
+delsieve_tree_burnin: 10
+delsieve_tree_heights: median
+delsieve_variant_burnin: 10
+delsieve_variant_estimates: median
+delsieve_variant_extra_args: ""
+delsieve_figtree: figtree
+delsieve_figtree_extra_args: ""
+delsieve_mutation_map: ""
+delsieve_geneannotator_subst: 1
+delsieve_mutation_map_annovar: false
+delsieve_annovar_separator: 0
+delsieve_annovar_filter_col: -1
+delsieve_annovar_filter_keywords: ""
+delsieve_gene_filter: ""
+delsieve_gene_filter_sep: 0
+delsieve_gene_filter_col: 0
+delsieve_geneannotator_extra_args: ""

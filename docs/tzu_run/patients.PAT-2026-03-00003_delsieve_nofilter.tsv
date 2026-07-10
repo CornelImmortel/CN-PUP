@@ -1,0 +1,2 @@
+patient_id	ref_fasta	monovar_bam_list	cell_metadata	germline_mode	germline_vcf	bulk_bam	leukocyte_bam	leukocyte_vcf
+PAT-2026-03-00003	/tzu-share-2/resources/genome/fasta_sarek/Homo_sapiens_assembly38.fasta	docs/tzu_run/Pat_03_CTCs.monovar_bams.txt	docs/tzu_run/Pat_03_CTCs.cells.tsv	monovar_wbc_subset	NA	NA	/tzu-share-2/data/TZU/novovene_staging/processed/hmf/novorun2/output/PAT-2026-03-00003_10/alignments/dna/BFX-2026-04-00051.redux.bam	NA
