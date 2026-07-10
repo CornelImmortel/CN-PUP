@@ -726,6 +726,14 @@ process RUN_SCCALLER_FROM_BAM {
       --engine "${params.sccaller_engine}"${sccaller_extra_args} \\
       > "${cell_id}.sccaller.log" 2>&1
 
+    # sccaller_v2.0.0.py resolves --output relative to --wkdir, not the
+    # process's actual working directory, despite --output being passed as a
+    # bare filename here -- confirmed empirically (patient01/CTC2, 2026-07-08):
+    # the VCF landed in sccaller_work/CTC2.sccaller.vcf, not ./CTC2.sccaller.vcf.
+    if [[ -s "sccaller_work/${cell_id}.sccaller.vcf" && ! -s "${cell_id}.sccaller.vcf" ]]; then
+      mv "sccaller_work/${cell_id}.sccaller.vcf" "${cell_id}.sccaller.vcf"
+    fi
+
     if [[ ! -s "${cell_id}.sccaller.vcf" ]]; then
       echo "ERROR: ${params.sccaller_script} did not produce ${cell_id}.sccaller.vcf -- see ${cell_id}.sccaller.log. A common cause on this reference is SCcaller choking on HLA/ALT decoy contigs; try setting --sccaller_head/--sccaller_tail to restrict it to the primary chromosomes (e.g. 1/22 for Homo_sapiens_assembly38.fasta)." >&2
       exit 1
