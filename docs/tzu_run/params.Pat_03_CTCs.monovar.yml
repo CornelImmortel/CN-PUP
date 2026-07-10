@@ -27,7 +27,14 @@ monovar_region: ""
 # crashes RUN_MONOVAR/RUN_MONOVAR_WBC_SUBSET with
 # "faidx_adjust_position: The sequence 'phix' was not found".
 monovar_targets_bed: /tzu-share-2/users/students/cornelusp/canonical_chroms.bed
-monovar_background_ctc_count: 5
+# Include every CTC in the WBC germline-check joint call, not just a random
+# background sample -- a variant carried only by a CTC outside the sampled
+# background was never jointly genotyped with the WBC at all (shows up as
+# "not_available" rather than a real coverage/genotype answer in the detail
+# workbook). PREPARE_MONOVAR_WBC_SUBSET caps this at the actual CTC count
+# per patient (`min(ctc_count, len(ctcs))`), so one large number works for
+# every patient regardless of how many CTCs they have.
+monovar_background_ctc_count: 99
 monovar_background_seed: 13
 
 # Optional external/SCcaller inputs. Leave branches off unless these point to
