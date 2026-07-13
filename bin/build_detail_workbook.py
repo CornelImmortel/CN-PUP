@@ -19,6 +19,16 @@ from openpyxl.utils import get_column_letter
 
 MIN_ALT_READS = 4
 
+# openpyxl/Excel hard cap is 1,048,576 rows per sheet (1-indexed). Row 1 is
+# the header, so at most this many data rows fit starting at row 2. WGS-scale
+# long tables can exceed this (LOWCONF calls are no longer dropped upstream,
+# see FILTER_MONOVAR_AND_SUBTRACT_GERMLINE) -- when that happens we skip the
+# per-row Excel dump for that sheet rather than crashing the whole workbook,
+# since the full data is always available uncapped in the long-table TSV /
+# shared_variant_matrix TSV regardless. Stopgap for the current WGS rerun,
+# not a long-term fix for the underlying row-count blowup.
+EXCEL_MAX_DATA_ROWS = 1_048_575
+
 COLORS = {
     "good": ("E6F5E6", "0CA30C"),
     "warning": ("FBF1DE", "C98500"),
@@ -176,6 +186,20 @@ def autosize(ws, headers, max_width=40):
 def build_all_variants_sheet(wb, rows, wbc_raw):
     ws = wb.create_sheet("All final variants")
     headers = LONG_COLUMNS + ["VAF", "WBC_tier", "WBC_GT", "WBC_DP", "WBC_alt"]
+
+    if len(rows) > EXCEL_MAX_DATA_ROWS:
+        write_header(ws, ["notice"])
+        ws.cell(
+            row=2, column=1,
+            value=(
+                f"Skipped: {len(rows)} rows exceeds Excel's {EXCEL_MAX_DATA_ROWS}"
+                " per-sheet data-row limit. Use the long-table TSV "
+                "(--long-table input to this script) for the full per-variant data."
+            ),
+        )
+        autosize(ws, ["notice"], max_width=100)
+        return
+
     write_header(ws, headers)
 
     for r_idx, row in enumerate(rows, start=2):
@@ -271,6 +295,20 @@ def build_shared_variants_sheet(wb, computed_rows, ctc_ids):
     ctc_headers = [h for c in ctc_ids for h in (f"{c}_state", f"{c}_DP", f"{c}_alt")]
     wbc_headers = ["WBC_tier", "WBC_GT", "WBC_DP", "WBC_alt"]
     headers = base_headers + ctc_headers + wbc_headers
+
+    if len(computed_rows) > EXCEL_MAX_DATA_ROWS:
+        write_header(ws, ["notice"])
+        ws.cell(
+            row=2, column=1,
+            value=(
+                f"Skipped: {len(computed_rows)} shared variants exceeds Excel's "
+                f"{EXCEL_MAX_DATA_ROWS} per-sheet data-row limit. Use the "
+                "shared_variant_matrix TSV (--matrix-out) for the full data."
+            ),
+        )
+        autosize(ws, ["notice"], max_width=100)
+        return
+
     write_header(ws, headers)
 
     for r_idx, entry in enumerate(computed_rows, start=2):
