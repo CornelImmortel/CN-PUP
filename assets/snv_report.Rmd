@@ -35,6 +35,23 @@ suppressPackageStartupMessages({
   library(htmltools)
 })
 
+# DT::datatable() embeds the full table as client-side JSON regardless of
+# pageLength, which can exceed R's hard 2^31-1 byte string limit at WGS
+# scale now that LOWCONF calls are no longer dropped upstream (crashed on
+# the "shared by >=2 CTCs" table for PAT-2026-03-00003). Above max_rows,
+# skip the interactive widget and point at the TSV/workbook instead --
+# stopgap for the current WGS rerun, not a long-term fix for the
+# underlying row-count blowup.
+safe_datatable <- function(df, ..., max_rows = 50000) {
+  if (nrow(df) > max_rows) {
+    return(htmltools::tags$blockquote(sprintf(
+      "Table skipped: %s rows exceeds the %s-row display cap for this report (interactive tables above this size can exceed R's internal string-size limit). See the long-table TSV / detail workbook for the full data.",
+      format(nrow(df), big.mark = ","), format(max_rows, big.mark = ",")
+    )))
+  }
+  datatable(df, ...)
+}
+
 patient_id <- params$patient_id
 long <- read_tsv(params$long_table, show_col_types = FALSE)
 binary <- read_tsv(params$binary_matrix, show_col_types = FALSE)
@@ -431,7 +448,7 @@ all_shared_table <- long %>%
   filter(var_id %in% all_shared_variants) %>%
   arrange(CHROM, POS, ctc_id) %>%
   select(any_of(c("ctc_id", "var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "altread", "VAF")))
-datatable(all_shared_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+safe_datatable(all_shared_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
 ```
 
 ## Variants Shared By At Least Two CTCs
@@ -442,7 +459,7 @@ shared2_table <- long %>%
   mutate(shared_ctc_count = variant_shared_n[var_id]) %>%
   arrange(desc(shared_ctc_count), CHROM, POS, ctc_id) %>%
   select(any_of(c("shared_ctc_count", "ctc_id", "var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "altread", "VAF")))
-datatable(shared2_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
+safe_datatable(shared2_table, rownames = FALSE, filter = "top", options = list(pageLength = 20, scrollX = TRUE))
 ```
 
 Need the exact per-cell DP/alt-reads behind any variant above (including the WBC's own reads)? See the companion workbook: **`r patient_id`_detail.xlsx**, generated alongside this report with one row per variant/cell plus a WBC lookup for every shared variant.
@@ -458,7 +475,7 @@ for (cell in cell_ids) {
     print(
       dd %>%
         select(any_of(c("var_id", "CHROM", "POS", "REF", "ALT", "gene_symbol", "consequence", "impact", "hgvsp", "existing_variation", "max_af", "max_af_pops", "DP", "refread", "altread", "VAF", "GT", "FILTER"))) %>%
-        datatable(rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))
+        safe_datatable(rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))
     )
   }
 }
