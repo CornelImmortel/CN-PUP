@@ -62,6 +62,7 @@ summary_tbl <- read_tsv(params$summary_table, show_col_types = FALSE)
 if (!"gene_symbol" %in% names(long)) long$gene_symbol <- ""
 if (!"consequence" %in% names(long)) long$consequence <- ""
 if (!"impact" %in% names(long)) long$impact <- ""
+if (!"QUAL" %in% names(long)) long$QUAL <- ""
 for (optional_col in c("hgvsc", "hgvsp", "existing_variation", "max_af", "max_af_pops")) {
   if (!optional_col %in% names(long)) long[[optional_col]] <- ""
 }
@@ -72,6 +73,11 @@ long <- long %>%
     DP_num = suppressWarnings(as.numeric(DP)),
     altread_num = suppressWarnings(as.numeric(altread)),
     refread_num = suppressWarnings(as.numeric(refread)),
+    # MonoVar QUAL = -log10(P(no variant present anywhere in the cohort at
+    # this site)) -- site-level (identical across every cell at a given
+    # position), NOT true Phred scale (no x10 factor). Meaningful
+    # discriminating range is roughly 0-15.
+    QUAL_num = suppressWarnings(as.numeric(QUAL)),
     VAF = if_else((altread_num + refread_num) > 0, altread_num / (altread_num + refread_num), NA_real_),
     gene_display = if_else(is.na(gene_symbol) | gene_symbol == "", paste0("intergenic_", CHROM), gene_symbol),
     Variant_Classification = case_when(
@@ -408,6 +414,52 @@ if (nrow(long) > 0) {
     labs(x = "Variant allele fraction", y = "SNVs", title = "VAF distribution per CTC") +
     theme_minimal(base_size = 11) +
     theme(legend.position = "none")
+}
+```
+
+```{r dp-hist}
+if (nrow(long) > 0) {
+  long %>%
+    filter(!is.na(DP_num)) %>%
+    ggplot(aes(x = DP_num, fill = ctc_id)) +
+    geom_histogram(bins = 30, alpha = 0.75, position = "identity") +
+    facet_wrap(~ctc_id, scales = "free_y") +
+    labs(x = "Depth (DP)", y = "SNVs", title = "Read depth distribution per CTC") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "none")
+}
+```
+
+```{r altread-hist}
+if (nrow(long) > 0) {
+  long %>%
+    filter(!is.na(altread_num)) %>%
+    ggplot(aes(x = altread_num, fill = ctc_id)) +
+    geom_histogram(bins = 30, alpha = 0.75, position = "identity") +
+    facet_wrap(~ctc_id, scales = "free_y") +
+    labs(x = "Alt reads", y = "SNVs", title = "Alt-read count distribution per CTC") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "none")
+}
+```
+
+```{r qual-hist}
+# QUAL is a site-level quantity (identical across every cell at a given
+# position), unlike DP/alt-reads which are genuinely per-cell -- de-duplicate
+# to one row per unique site first so sites shared across many CTCs aren't
+# overweighted just by cell count, and facet by CTC doesn't make sense here
+# (every CTC sharing a site would show the exact same bar).
+if (nrow(long) > 0) {
+  long %>%
+    filter(!is.na(QUAL_num)) %>%
+    distinct(CHROM, POS, REF, ALT, .keep_all = TRUE) %>%
+    ggplot(aes(x = QUAL_num)) +
+    geom_histogram(bins = 30, fill = "#2563eb", alpha = 0.85) +
+    labs(
+      x = "MonoVar QUAL (-log10 P[no variant]; not Phred-scaled)", y = "Unique sites",
+      title = "QUAL distribution across unique variant sites"
+    ) +
+    theme_minimal(base_size = 11)
 }
 ```
 

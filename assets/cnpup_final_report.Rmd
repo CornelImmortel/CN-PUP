@@ -155,6 +155,23 @@ if (nrow(ctc_qc) && "mean_bam_coverage" %in% names(ctc_qc) && any(nzchar(ctc_qc$
 }
 ```
 
+```{r ctc-qual}
+# MonoVar QUAL = -log10(P(no variant present anywhere in the cohort at this
+# site)) -- a site-level (not per-cell) joint quantity, NOT true Phred scale
+# (no x10 factor). Meaningful discriminating range is roughly 0-15; higher
+# values just reflect float-precision headroom, not proportionally more
+# confidence. See src/monovar.py's `Qual = 0 - math.log10(zero_variant_prob)`.
+if (nrow(ctc_qc) && "median_variant_site_qual" %in% names(ctc_qc) && any(nzchar(ctc_qc$median_variant_site_qual))) {
+  qual_df <- ctc_qc %>% mutate(median_variant_site_qual = suppressWarnings(as.numeric(median_variant_site_qual)))
+  ggplot(qual_df, aes(x = reorder(cell_id, median_variant_site_qual), y = median_variant_site_qual, fill = qc_status)) +
+    geom_col(width = 0.75) +
+    coord_flip() +
+    scale_fill_manual(values = c(PASS = "#22c55e", WARN = "#f97316", FAIL = "#ef4444", UNKNOWN = "#9ca3af"), drop = FALSE) +
+    labs(x = "CTC", y = "Median MonoVar QUAL at retained variant sites", title = "Variant-site call confidence per CTC") +
+    theme_minimal(base_size = 12)
+}
+```
+
 ```{r ctc-qc-table}
 if (nrow(ctc_qc)) {
   datatable(ctc_qc, rownames = FALSE, filter = "top", options = list(pageLength = 15, scrollX = TRUE))

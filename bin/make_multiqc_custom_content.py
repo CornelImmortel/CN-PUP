@@ -201,6 +201,24 @@ def main():
         vaf_medians,
     )
 
+    # MonoVar QUAL = -log10(P(no variant present anywhere in the cohort at
+    # this site)) -- site-level, not per-cell, and NOT true Phred scale (no
+    # x10 factor). Meaningful range is roughly 0-15.
+    qual_medians = {
+        sample: {"median_qual": values.get("nonref_qual_median")}
+        for sample, values in prefilter_data.items()
+    }
+    write_bargraph(
+        outdir / f"{args.patient_id}.prefilter_qual_median_mqc.json",
+        "cnpup_prefilter_qual_median",
+        "CN-PUP median QUAL before filtering",
+        "Median MonoVar QUAL among non-reference candidate sites before downstream filtering "
+        "(-log10 of the site's joint probability of having no variant; not Phred-scaled).",
+        "Median QUAL at non-reference sites",
+        "QUAL",
+        qual_medians,
+    )
+
     per_cell_drop = {}
     for sample, values in prefilter_data.items():
         nonref = values.get("nonref_sites") or 0

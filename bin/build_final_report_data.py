@@ -60,6 +60,7 @@ def normalize_long(long_df: pd.DataFrame) -> pd.DataFrame:
         "DP": "total_depth",
         "VAF": "vaf",
         "FILTER": "filter",
+        "QUAL": "qual",
         "consequence": "effect",
     }
     long_df = long_df.rename(columns={k: v for k, v in rename.items() if k in long_df.columns})
@@ -84,6 +85,7 @@ def normalize_long(long_df: pd.DataFrame) -> pd.DataFrame:
         "total_depth",
         "altread",
         "vaf",
+        "qual",
     ]:
         if col not in long_df.columns:
             long_df[col] = ""
@@ -93,6 +95,7 @@ def normalize_long(long_df: pd.DataFrame) -> pd.DataFrame:
     long_df["total_depth_num"] = num_series(long_df["total_depth"])
     long_df["altread_num"] = num_series(long_df["altread"])
     long_df["vaf_num"] = num_series(long_df["vaf"])
+    long_df["qual_num"] = num_series(long_df["qual"])
     return long_df
 
 
@@ -215,6 +218,7 @@ def build_ctc_qc(long_df: pd.DataFrame, meta: pd.DataFrame, support: dict[str, s
         "private_variant_count",
         "median_variant_site_depth",
         "median_variant_site_vaf",
+        "median_variant_site_qual",
         "callers",
     ]
     rows = []
@@ -228,6 +232,7 @@ def build_ctc_qc(long_df: pd.DataFrame, meta: pd.DataFrame, support: dict[str, s
         warnings = []
         median_depth = sub["total_depth_num"].median() if not sub.empty else np.nan
         median_vaf = sub["vaf_num"].median() if not sub.empty else np.nan
+        median_qual = sub["qual_num"].median() if not sub.empty else np.nan
         if sub.empty:
             warnings.append("No retained variant rows")
         if pd.isna(median_depth):
@@ -268,6 +273,7 @@ def build_ctc_qc(long_df: pd.DataFrame, meta: pd.DataFrame, support: dict[str, s
                 "private_variant_count": sum(1 for v in var_set if len(support.get(v, set())) == 1),
                 "median_variant_site_depth": "" if pd.isna(median_depth) else round(float(median_depth), 3),
                 "median_variant_site_vaf": "" if pd.isna(median_vaf) else round(float(median_vaf), 5),
+                "median_variant_site_qual": "" if pd.isna(median_qual) else round(float(median_qual), 3),
                 "callers": ", ".join(sorted(set(sub["caller"].dropna().astype(str)))) if not sub.empty else "",
             }
         )

@@ -55,9 +55,11 @@ def summarize_split_vcf(path):
     dp_values = []
     alt_values = []
     vaf_values = []
+    qual_values = []
     nonref_dp_values = []
     nonref_alt_values = []
     nonref_vaf_values = []
+    nonref_qual_values = []
 
     with open_text(path) as handle:
         for line in handle:
@@ -74,6 +76,11 @@ def summarize_split_vcf(path):
                 dp_int = int(dp) if dp not in ("", ".") else None
             except ValueError:
                 dp_int = None
+            qual_str = fields[5]
+            try:
+                qual_float = float(qual_str) if qual_str not in ("", ".") else None
+            except ValueError:
+                qual_float = None
             ref, alt = parse_ad(sample.get("AD", ""))
             if dp_int is not None:
                 dp_values.append(dp_int)
@@ -81,6 +88,8 @@ def summarize_split_vcf(path):
                 alt_values.append(alt)
             if ref is not None and alt is not None and (ref + alt) > 0:
                 vaf_values.append(alt / (ref + alt))
+            if qual_float is not None:
+                qual_values.append(qual_float)
             nonref = gt not in ("0/0", "0|0", "./.", ".|.", "")
             if nonref:
                 nonref_sites += 1
@@ -105,6 +114,8 @@ def summarize_split_vcf(path):
                     nonref_alt_values.append(alt)
                 if ref is not None and alt is not None and (ref + alt) > 0:
                     nonref_vaf_values.append(alt / (ref + alt))
+                if qual_float is not None:
+                    nonref_qual_values.append(qual_float)
 
     def stats(prefix, values):
         return {
@@ -129,9 +140,11 @@ def summarize_split_vcf(path):
     row.update(stats("all_dp", dp_values))
     row.update(stats("all_alt", alt_values))
     row.update(stats("all_vaf", vaf_values))
+    row.update(stats("all_qual", qual_values))
     row.update(stats("nonref_dp", nonref_dp_values))
     row.update(stats("nonref_alt", nonref_alt_values))
     row.update(stats("nonref_vaf", nonref_vaf_values))
+    row.update(stats("nonref_qual", nonref_qual_values))
     return row
 
 
