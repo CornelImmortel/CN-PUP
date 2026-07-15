@@ -10,9 +10,8 @@ identification, only the MonoVar candidate-site scope and BAM-QC target region c
   00027, 00028, 00029, 00030, 00031, 00032) + WBC `BFX-2026-04-00051`.
 - `PAT-2026-03-00004` (breast_cancer): 7 CTCs + WBC `BFX-2026-04-00050`.
 
-Both WBC assignments were wet-lab-confirmed (see `STATUS.md`) and are already correct in
-`patients.Pat_03_Pat_04_CTCs.monovar.tsv` and `Pat_0{3,4}_CTCs.cells.tsv` — reused as-is,
-no changes needed for this exome variant.
+Both WBC assignments were wet-lab-confirmed (see `STATUS.md`) and the WBC BAM paths in
+`Pat_0{3,4}_CTCs.cells.tsv` are unchanged for this exome variant.
 
 ## What actually changes vs. the WGS combined run
 
@@ -29,8 +28,45 @@ no changes needed for this exome variant.
 3. `mosdepth_by` → the same exome BED (was empty/whole-genome), so BAM-QC coverage
    stats are scoped consistently with the restricted variant calls.
 
-Everything else — filter thresholds, VEP config, `germline_mode: monovar_wbc_subset`,
-DelSIEVE (off) — is identical to the WGS combined run.
+## Germline exclusion methodology change (applies to BOTH the WGS and exome configs)
+
+`patients.Pat_03_Pat_04_CTCs.monovar.tsv`'s `germline_mode` changed from
+`monovar_wbc_subset` to `precomputed_vcf` for both patients -- this is a shared manifest,
+so it affects any future `-resume`/rerun of the WGS combined run too, not just this
+exome variant.
+
+Previously, `monovar_wbc_subset` mode ran MonoVar's own joint caller a *second* time
+across all CTCs + the WBC together (`RUN_MONOVAR_WBC_SUBSET`) purely to extract the WBC's
+own genotype as the germline-exclusion reference -- real extra compute for a call that's
+otherwise redundant with the WBC's own independent sequencing. `precomputed_vcf` mode
+instead takes an already-built VCF directly via the `germline_vcf` column, skipping that
+second MonoVar run entirely.
+
+The VCFs now referenced (`germline_vcf` column) were built from PTATO's own raw
+joint-germline calls for each patient's WBC sample, subsetting to just that one sample
+and forcing `FILTER=PASS` on every row (`PREPARE_PRECOMPUTED_GERMLINE`'s
+`bcftools view -f PASS` step requires it literally -- the raw PTATO VCFs have `FILTER=.`,
+which would otherwise silently produce an empty exclusion VCF):
+```bash
+bcftools view -s <WBC_BFX_ID> <source joint-germline VCF> \
+  | bcftools view -i 'GT="alt"' \
+  | awk 'BEGIN{OFS="\t"} /^#/{print;next} {$7="PASS"; print}' \
+  | bcftools view -Oz -o wbc_precomputed_germline.<patient_id>.vcf.gz
+```
+- Patient 03 source: `/scratch/albertoj/minibulk_pat03_joint_germline.subset.vcf.gz`
+  (sample `BFX-2026-04-00051`) -> 4,410,715 records.
+- Patient 04 source: `/scratch/albertoj/tmp_pat04.subset.vcf.gz`
+  (sample `BFX-2026-04-00050`) -> 4,800,210 records.
+
+Both source VCFs also contain a `minibulk` sample (deliberately **not** used) --
+cross-referencing against PTATO's own per-CTC `CLONAL_SAMPLE_NAMES` classification for
+patient 03 strongly suggests `minibulk` is a pool of the CTCs' own variant signal rather
+than an independent germline reference; using it for germline exclusion would risk
+stripping out real early/clonal somatic mutations shared across CTCs, not just true
+germline SNPs.
+
+Everything else -- filter thresholds, VEP config, DelSIEVE (off) -- is identical to the
+WGS combined run.
 
 ## Run on the server
 
