@@ -4,7 +4,8 @@ channels:
   - bioconda
 dependencies:
   - python>=3.9
-  - ensembl-vep
+  - ensembl-vep=115
+  - perl-dbi
   - bcftools
   - htslib
   - samtools
