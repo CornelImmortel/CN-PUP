@@ -1,0 +1,43 @@
+# Step 2 of 2 for patient02_ctc_compare. Run AFTER params.patient02_step1_monovar.yml,
+# with -resume (same patients.tsv/monovar_bam_list) so this reuses that
+# pass's MonoVar split VCFs instead of recomputing them.
+#
+# run_caller_scorecard is deliberately false here (unlike patient01/patient03's
+# 4-caller scorecard runs): no HaplotypeCaller/DeepVariant calls exist for the
+# individual CTCs of this patient (only MonoVar), so a scorecard isn't
+# meaningful -- this run is coverage-only, matching what was asked for.
+# run_delsieve_prep/run_delsieve are also false: CN-PUP's own native DelSIEVE
+# branch has a known candidate-selection bug (re-derives "supporting CTC"
+# from raw DP/alt/VAF instead of the MonoVar genotype call) -- tree analysis
+# goes through the separate delsieve-wbc-corrected-run / ctc-scite-wbc-corrected-run
+# repos instead, not through this pipeline.
+#
+# NOT verified by an actual run: whether caller_vcfs.tsv's relative
+# results/... MonoVar paths resolve correctly for run_comparison/run_snv_report
+# the way they do for run_caller_scorecard in the patient01/03 configs this
+# was modeled on -- worth a small/fast sanity check before trusting a full run.
+patients: configs/patient02_ctc_compare/patients.tsv
+caller_vcfs: configs/caller_vcfs.patient02_compare.tsv
+tissue_vcfs: configs/tissue_vcfs.patient02_compare.tsv
+outdir: results
+
+run_monovar: false
+run_sccaller: false
+run_external_callers: true
+run_comparison: true
+run_caller_scorecard: false
+
+run_delsieve_prep: false
+run_delsieve: false
+run_delsieve_from_existing: false
+run_delsieve_tree_annotator: false
+
+run_vep_filter: true
+run_snv_report: true
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+max_population_af: 0.001
+keep_cosmic: true
+genome: GRCh38

@@ -1,0 +1,32 @@
+# Step 2 of 2 for patient06_ctc_compare. Run AFTER params.patient06_step1_monovar.yml,
+# with -resume. Same caveats as params.patient02_step2_compare.yml (no
+# scorecard, no native DelSIEVE branch, caller_vcfs relative-path assumption
+# not yet verified by an actual run). germline_mode=precomputed_vcf has no
+# leukocyte-live-exclusion dependency, so this step could in principle be
+# merged with step 1 into a single pass -- kept separate anyway for a
+# uniform two-command recipe across all three new patients.
+patients: configs/patient06_ctc_compare/patients.tsv
+caller_vcfs: configs/caller_vcfs.patient06_compare.tsv
+tissue_vcfs: configs/tissue_vcfs.patient06_compare.tsv
+outdir: results
+
+run_monovar: false
+run_sccaller: false
+run_external_callers: true
+run_comparison: true
+run_caller_scorecard: false
+
+run_delsieve_prep: false
+run_delsieve: false
+run_delsieve_from_existing: false
+run_delsieve_tree_annotator: false
+
+run_vep_filter: true
+run_snv_report: true
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+max_population_af: 0.001
+keep_cosmic: true
+genome: GRCh38

@@ -1,0 +1,12 @@
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617716.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617715.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617657.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617656.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617720.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617719.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617722.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617721.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617635.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617634.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617544.sorted.bam
+/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617545.sorted.bam

@@ -1,0 +1,2 @@
+patient_id	sample_id	sample_type	caller	vcf_path
+patient06_ctc_compare	primary	primary	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_06/SRR8617592/SRR8617592.deepvariant_snpEff.ann.vcf.gz

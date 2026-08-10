@@ -1,0 +1,29 @@
+# Step 1 of 2 for patient05_ctc_compare: MonoVar only. Run this first.
+# germline_mode=joint_monovar_leukocyte (no bulk-blood VCF combined in --
+# SRR8617564 has no precomputed caller VCF on this share, only a BAM, and
+# the user decided not to bother combining for P05/P06). Exclusion is
+# derived live from this run's own joint MonoVar call over the CTCs +
+# leukocyte cell together -- single source, not "combined" mode.
+patients: configs/patient05_ctc_compare/patients.tsv
+outdir: results
+
+run_monovar: true
+run_sccaller: false
+run_external_callers: false
+run_comparison: false
+run_caller_scorecard: false
+run_vep_filter: false
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0

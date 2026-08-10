@@ -1,0 +1,2 @@
+patient_id	ref_fasta	monovar_bam_list	cell_metadata	germline_mode	germline_vcf	bulk_bam	leukocyte_bam	leukocyte_vcf
+patient05_ctc_compare	/tzu-share-2/resources/genome/fasta_sarek/Homo_sapiens_assembly38.fasta	configs/patient05_ctc_compare/bams.txt	configs/patient05_ctc_compare/cells.tsv	joint_monovar_leukocyte	NA	NA	/tzu-share-2/data/public/PRJNA448888/processed/sarek/alignments/SRR8617562.sorted.bam	NA

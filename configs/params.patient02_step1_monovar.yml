@@ -1,0 +1,29 @@
+# Step 1 of 2 for patient02_ctc_compare: MonoVar only. Run this first.
+# Produces results/patient02_ctc_compare/split_calls/monovar/CTCx.monovar.split.vcf
+# per CTC, plus the leukocyte split (leuko.monovar.split.vcf) that
+# germline_mode=combined derives its live exclusion from within this same run.
+# Then run params.patient02_step2_compare.yml with -resume (same
+# monovar_bam_list/patients.tsv) to reuse this pass's MonoVar result.
+patients: configs/patient02_ctc_compare/patients.tsv
+outdir: results
+
+run_monovar: true
+run_sccaller: false
+run_external_callers: false
+run_comparison: false
+run_caller_scorecard: false
+run_vep_filter: false
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0

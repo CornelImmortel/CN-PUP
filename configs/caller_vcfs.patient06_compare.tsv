@@ -1,0 +1,14 @@
+patient_id	cell_id	caller	vcf_path	sccaller_mode
+patient06_ctc_compare	CTC1	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC1.monovar.split.vcf
+patient06_ctc_compare	CTC2	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC2.monovar.split.vcf
+patient06_ctc_compare	CTC3	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC3.monovar.split.vcf
+patient06_ctc_compare	CTC4	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC4.monovar.split.vcf
+patient06_ctc_compare	CTC5	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC5.monovar.split.vcf
+patient06_ctc_compare	CTC6	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC6.monovar.split.vcf
+patient06_ctc_compare	CTC7	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC7.monovar.split.vcf
+patient06_ctc_compare	CTC8	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC8.monovar.split.vcf
+patient06_ctc_compare	CTC9	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC9.monovar.split.vcf
+patient06_ctc_compare	CTC10	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC10.monovar.split.vcf
+patient06_ctc_compare	CTC11	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC11.monovar.split.vcf
+patient06_ctc_compare	CTC12	monovar	results/patient06_ctc_compare/split_calls/monovar/CTC12.monovar.split.vcf
+patient06_ctc_compare	primary	deepvariant	/tzu-share-2/data/public/PRJNA448888/processed/sarek_variantcalling/variant_calling/deepvariant/patient_06/SRR8617592/SRR8617592.deepvariant_snpEff.ann.vcf.gz

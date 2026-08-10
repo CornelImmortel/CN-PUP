@@ -1,0 +1,31 @@
+# Step 1 of 2 for patient06_ctc_compare: MonoVar only. Run this first.
+# germline_mode=precomputed_vcf, sourced from the existing DeepVariant call
+# on the bulk-blood sample (SRR8617591) -- no leukocyte sample exists for
+# this patient at all, so there is nothing to "combine". This mode has no
+# leukocyte-derived-live-exclusion dependency, so unlike patient02/patient05
+# this run could technically be merged with step 2 in one pass -- kept as a
+# separate step anyway, purely so all three new patients follow the same
+# two-command recipe.
+patients: configs/patient06_ctc_compare/patients.tsv
+outdir: results
+
+run_monovar: true
+run_sccaller: false
+run_external_callers: false
+run_comparison: false
+run_caller_scorecard: false
+run_vep_filter: false
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
