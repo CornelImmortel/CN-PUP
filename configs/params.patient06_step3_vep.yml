@@ -1,0 +1,51 @@
+# Step 3 (VEP-only) for patient06_ctc_compare. Run AFTER
+# params.patient06_step1_monovar.yml has already produced
+# results/patient06_ctc_compare/split_calls/monovar/CTC*.split.vcf, with
+# -resume so RUN_MONOVAR/SPLIT_MONOVAR are cache-hit rather than recomputed.
+#
+# IMPORTANT, verified against main.nf (not guessed): the entire VEP filter
+# chain (MAKE_VEP_INPUT_CHUNKS -> VEP_ANNOTATE_CHUNK ->
+# MERGE_VEP_AND_POPULATION_COSMIC_FILTER, main.nf ~line 206-439) is nested
+# INSIDE `if (params.run_monovar) { ... }`. The existing
+# params.patient06_step2_compare.yml sets run_monovar: false alongside
+# run_vep_filter: true -- with that combination the whole block (VEP
+# included) is skipped and only "MonoVar calling skipped" is logged, so
+# that config as written does NOT actually produce VEP output. This config
+# fixes that by keeping run_monovar: true; -resume + identical
+# patients.tsv/bams.txt is what makes Nextflow reuse the already-computed
+# split VCFs instead of rerunning MonoVar itself, not run_monovar: false.
+#
+# Deliberately minimal -- ONLY the VEP/population-COSMIC annotation step,
+# not caller comparison, scorecard, DelSIEVE, or SNV/final reports. Output
+# needed downstream (writingB coverage analysis): per-cell VEP tsvs under
+# results/patient06_ctc_compare/vep/monovar/ (chunk_annotations/ merged per
+# cell), matching the shape already used for Patient 03.
+#
+# Run: nextflow run main.nf -plugins nf-weblog -profile conda \
+#        -params-file configs/params.patient06_step3_vep.yml -resume
+patients: configs/patient06_ctc_compare/patients.tsv
+outdir: results
+
+run_monovar: true
+run_sccaller: false
+run_external_callers: false
+run_comparison: false
+run_caller_scorecard: false
+run_vep_filter: true
+run_snv_report: false
+run_final_report: false
+run_bam_qc: false
+run_delsieve_prep: false
+run_delsieve: false
+
+monovar_script: /tzu-share-2/users/students/cornelusp/monovar/monovar/src/monovar.py
+monovar_threads: 6
+monovar_region: ""
+monovar_targets_bed: ""
+
+min_total_depth: 20
+min_alt_reads: 4
+min_vaf: 0.0
+max_population_af: 0.001
+keep_cosmic: true
+genome: GRCh38
